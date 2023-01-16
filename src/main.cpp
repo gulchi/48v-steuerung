@@ -1,3 +1,8 @@
+
+#define IOTWEBCONF_DEBUG_PWD_TO_SERIAL 1
+#define IOTWEBCONF_WORD_LEN 70
+#define IOTWEBCONF_PASSWORD_LEN 70
+
 #include <Arduino.h>
 #include <IotWebConf.h>
 #include <IotWebConfUsing.h>
@@ -11,41 +16,43 @@
 #error "This ain't a ESP8266 or ESP32, dumbo!"
 #endif
 
+
+
 // -- Initial name of the Thing. Used e.g. as SSID of the own Access Point.
 const char thingName[] = "HeaterControl";
 
 // -- Initial password to connect to the Thing, when it creates an own Access Point.
 const char wifiInitialApPassword[] = "smrtTHNG8266";
 
-#define STRING_LEN 128
-#define NUMBER_LEN 10
+#define STRING_LEN 69
+#define NUMBER_LEN 5
 
 // -- Configuration specific key. The value should be modified if config structure was changed.
-#define CONFIG_VERSION "002"
+#define CONFIG_VERSION "008"
 
 // -- When CONFIG_PIN is pulled to ground on startup, the Thing will use the initial
 //      password to buld an AP. (E.g. in case of lost password)
-#define CONFIG_PIN D2
+#define CONFIG_PIN D0
 
 // -- Status indicator pin.
 //      First it will light up (kept LOW), on Wifi connection it will blink,
 //      when connected to the Wifi it will turn off (kept HIGH).
 #define STATUS_PIN LED_BUILTIN
 
-#define PIN_HEATER_1 D3
-#define PIN_HEATER_2 D4
-#define PIN_HEATER_3 D5
-#define PIN_HEATER_4 D6
+#define PIN_HEATER_1 D5
+#define PIN_HEATER_2 D6
+#define PIN_HEATER_3 D7
+#define PIN_HEATER_4 D8
 
 union conv 
 {
-    uint16_t uint_val;
-    int16_t int_val;
+  uint16_t uint_val;
+  int16_t int_val;
 } conv;
 
 uint16_t targetPort = 502;
-uint8_t targetSID = 100;
-uint16_t addr = 841;
+uint8_t targetSID = 1;
+uint16_t addr = 1;
 uint16_t words = 4;
 
 #define REG_COUNT 4
@@ -74,6 +81,7 @@ char intParamValueIP4[NUMBER_LEN];
 
 
 unsigned long lastModbusCall = 0;
+unsigned long lastHeaterCall = 0;
 unsigned long modbusTimer = 10 * 1000;
 
 IPAddress remote;
@@ -86,6 +94,8 @@ int currentHeater2;
 int currentHeater3;
 int currentHeater4;
 
+int numberOfActiveHeater = 0;
+
 int minBatSOC;
 
 
@@ -93,10 +103,10 @@ IotWebConf iotWebConf(thingName, &dnsServer, &server, wifiInitialApPassword, CON
 // -- You can also use namespace formats e.g.: iotwebconf::TextParameter
 
 IotWebConfParameterGroup group1 = IotWebConfParameterGroup("group1", "Cerbo");
-IotWebConfNumberParameter intParamIP1 = IotWebConfNumberParameter("IP Adress Part 1", "ipaddr1", intParamValueIP1, NUMBER_LEN, "0", "0..255", "min='1' max='255' step='1'");
-IotWebConfNumberParameter intParamIP2 = IotWebConfNumberParameter("IP Adress Part 2", "ipaddr2", intParamValueIP2, NUMBER_LEN, "0", "0..255", "min='1' max='255' step='1'");
-IotWebConfNumberParameter intParamIP3 = IotWebConfNumberParameter("IP Adress Part 3", "ipaddr3", intParamValueIP3, NUMBER_LEN, "0", "0..255", "min='1' max='255' step='1'");
-IotWebConfNumberParameter intParamIP4 = IotWebConfNumberParameter("IP Adress Part 4", "ipaddr4", intParamValueIP4, NUMBER_LEN, "0", "0..255", "min='1' max='255' step='1'");
+IotWebConfNumberParameter intParamIP1 = IotWebConfNumberParameter("IP Adress Part 1", "ipaddr1", intParamValueIP1, NUMBER_LEN, "192", "0..255", "min='1' max='255' step='1'");
+IotWebConfNumberParameter intParamIP2 = IotWebConfNumberParameter("IP Adress Part 2", "ipaddr2", intParamValueIP2, NUMBER_LEN, "168", "0..255", "min='1' max='255' step='1'");
+IotWebConfNumberParameter intParamIP3 = IotWebConfNumberParameter("IP Adress Part 3", "ipaddr3", intParamValueIP3, NUMBER_LEN, "1", "0..255", "min='1' max='255' step='1'");
+IotWebConfNumberParameter intParamIP4 = IotWebConfNumberParameter("IP Adress Part 4", "ipaddr4", intParamValueIP4, NUMBER_LEN, "41", "0..255", "min='1' max='255' step='1'");
 
 
 // -- We can add a legend to the separator
@@ -110,7 +120,7 @@ IotWebConfNumberParameter intParamMinCurr4 = IotWebConfNumberParameter("Min Curr
 
 float batteryCurrent = 0;
 float batterySOC = 0;
-
+float estimatedCurrent = 0;
 
 
 ModbusTCP mb;  //ModbusTCP object
@@ -120,6 +130,10 @@ void setup()
   Serial.begin(115200);
   Serial.println();
   Serial.println("Starting up...");
+
+  pinMode(CONFIG_PIN, INPUT_PULLUP);
+
+  delay(50);
 
   group1.addItem(&intParamIP1);
   group1.addItem(&intParamIP2);
@@ -171,23 +185,22 @@ void setup()
   minBatSOC = atoi(intParamValueminSOC);
 }
 
-
-
-
 void loop() 
 {
   unsigned long currentTime = millis();
   unsigned long timediff;
+  unsigned long timediff2;
+  
+  
   // -- doLoop should be called as frequently as possible.
   iotWebConf.doLoop();
   mb.task();
 
   timediff = (currentTime > lastModbusCall) ? currentTime - lastModbusCall : lastModbusCall - currentTime;
+  timediff2 = (currentTime > lastHeaterCall) ? currentTime - lastHeaterCall : lastHeaterCall - currentTime;
 
   if(timediff > modbusTimer) {
     lastModbusCall = currentTime;
-
-    
 
     if(iotWebConf.getState() == iotwebconf::OnLine) {
       if(mb.isConnected(remote)) {
@@ -199,28 +212,40 @@ void loop()
 
   }
 
-  if(batteryCurrent > currentHeater1 && batterySOC > minBatSOC) {
-    digitalWrite(PIN_HEATER_1, HIGH);
-  } else {
-    digitalWrite(PIN_HEATER_1, LOW);
-  }
+  if(timediff2 > 2*modbusTimer) {
 
-  if(batteryCurrent > currentHeater2 && batterySOC > minBatSOC) {
-    digitalWrite(PIN_HEATER_2, HIGH);
-  } else {
-    digitalWrite(PIN_HEATER_2, LOW);
-  }
+    estimatedCurrent = batteryCurrent + (16*numberOfActiveHeater);
 
-  if(batteryCurrent > currentHeater3 && batterySOC > minBatSOC) {
-    digitalWrite(PIN_HEATER_3, HIGH);
-  } else {
-    digitalWrite(PIN_HEATER_3, LOW);
-  }
+    numberOfActiveHeater = 0;
 
-  if(batteryCurrent > currentHeater4 && batterySOC > minBatSOC) {
-    digitalWrite(PIN_HEATER_4, HIGH);
-  } else {
-    digitalWrite(PIN_HEATER_4, LOW);
+    if(batteryCurrent > 0 && estimatedCurrent > currentHeater1) {
+      digitalWrite(PIN_HEATER_1, HIGH);
+      numberOfActiveHeater++;
+    } else {
+      digitalWrite(PIN_HEATER_1, LOW);
+    }
+
+    if(batteryCurrent > 0 && estimatedCurrent > currentHeater2 && batterySOC > minBatSOC) {
+      digitalWrite(PIN_HEATER_2, HIGH);
+      numberOfActiveHeater++;
+    } else {
+      digitalWrite(PIN_HEATER_2, LOW);
+    }
+
+    if(batteryCurrent > 0 && estimatedCurrent > currentHeater3 && batterySOC > minBatSOC) {
+      digitalWrite(PIN_HEATER_3, HIGH);
+      numberOfActiveHeater++;
+    } else {
+      digitalWrite(PIN_HEATER_3, LOW);
+    }
+
+    if(batteryCurrent > 0 && estimatedCurrent > currentHeater4 && batterySOC > minBatSOC) {
+      digitalWrite(PIN_HEATER_4, HIGH);
+      numberOfActiveHeater++;
+    } else {
+      digitalWrite(PIN_HEATER_4, LOW);
+    }
+
   }
 }
 
@@ -262,14 +287,7 @@ void handleRoot()
   s += "<title>GX Remote Heater Control</title></head><body>Hello world!";
   s += "<ul>";
   s += "<li>GX IP Adress: ";
-  s += atoi(intParamValueIP1);
-  s += ".";
-  s += atoi(intParamValueIP2);
-  s += ".";
-  s += atoi(intParamValueIP3);
-  s += ".";
-  s += atoi(intParamValueIP4);
-  s += ".";
+  s += remote.toString();
   s += "<li>Min SOC: ";
   s += minBatSOC;
   s += "<li>Min Current Heater 1: ";
@@ -284,8 +302,12 @@ void handleRoot()
   s += batterySOC;
   s += "<li>Actual Current: ";
   s += batteryCurrent;
+  s += "<li>Estimated Current: ";
+  s += estimatedCurrent;
   s += "<li>Modbus Result: ";
   s += modbusresult;
+  s += "<li>IotWebConf State: ";
+  s += iotWebConf.getState();
   s += "</ul>";
   s += "Go to <a href='config'>configure page</a> to change values.";
   s += "</body></html>\n";
