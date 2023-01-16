@@ -122,6 +122,9 @@ float batteryCurrent = 0;
 float batterySOC = 0;
 float estimatedCurrent = 0;
 
+unsigned long modbusSuccessCounter = 0;
+unsigned long modbusErrorCounter = 0;
+
 
 ModbusTCP mb;  //ModbusTCP object
 
@@ -203,15 +206,19 @@ void loop()
     lastModbusCall = currentTime;
 
     if(iotWebConf.getState() == iotwebconf::OnLine) {
+      Serial.println("Modbus read input register");
       if(mb.isConnected(remote)) {
-        mb.readIreg(remote, addr, res, REG_COUNT, cb,targetSID);
+        mb.readIreg(remote, addr, res, REG_COUNT, cb, targetSID);
       } else {
+        Serial.println("Reconnect to Modbus Server");
         mb.connect(remote);
       }
     }
   }
 
   if(timediff2 > 2*modbusTimer) {
+    lastHeaterCall = currentTime;
+    Serial.println("Update output pins");
 
     estimatedCurrent = batteryCurrent + (16*numberOfActiveHeater);
 
@@ -249,12 +256,13 @@ void loop()
 }
 
 bool cb(Modbus::ResultCode event, uint16_t transactionId, void* data) { // Modbus Transaction callback
-
+  Serial.printf("Modbus result: %02X\n", event); 
   modbusresult = event;
   if(event != Modbus::EX_SUCCESS) {                // If transaction got an error
     Serial.printf("Modbus result: %02X\n", event);  // Display Modbus error code
     batteryCurrent = 0;
     batterySOC = 0;
+    modbusErrorCounter++;
   }
   if (event == Modbus::EX_TIMEOUT) {    // If Transaction timeout took place
     mb.disconnect(remote);              // Close connection to slave and
@@ -262,11 +270,12 @@ bool cb(Modbus::ResultCode event, uint16_t transactionId, void* data) { // Modbu
   }
 
   if(event == Modbus::EX_SUCCESS) {
-      batterySOC = res[2];
+    modbusSuccessCounter++;
+    batterySOC = res[2];
 
-      conv.uint_val = res[0];
+    conv.uint_val = res[0];
 
-      batteryCurrent = ((float)conv.int_val) / 10;
+    batteryCurrent = ((float)conv.int_val) / 10;
   }
   return true;
 }
@@ -301,10 +310,16 @@ void handleRoot()
   s += batterySOC;
   s += "<li>Actual Current: ";
   s += batteryCurrent;
+  s += "<li>Number of Active Heaters: ";
+  s += numberOfActiveHeater;
   s += "<li>Estimated Current: ";
   s += estimatedCurrent;
   s += "<li>Modbus Result: ";
   s += modbusresult;
+  s += "<li>Modbus Success Counter: ";
+  s += modbusSuccessCounter;
+  s += "<li>Modbus Error Counter: ";
+  s += modbusErrorCounter;
   s += "<li>IotWebConf State: ";
   s += iotWebConf.getState();
   s += "</ul>";
