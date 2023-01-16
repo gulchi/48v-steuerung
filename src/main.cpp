@@ -176,13 +176,15 @@ void setup()
 
 void loop() 
 {
+  unsigned long currentTime = millis();
+  unsigned long timediff;
   // -- doLoop should be called as frequently as possible.
   iotWebConf.doLoop();
   mb.task();
 
-  
+  timediff = (currentTime > lastModbusCall) ? currentTime - lastModbusCall : lastModbusCall - currentTime;
 
-  if((millis()- lastModbusCall) > modbusTimer) {
+  if(timediff > modbusTimer) {
     lastModbusCall = millis();
 
     
