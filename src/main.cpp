@@ -209,7 +209,6 @@ void loop()
         mb.connect(remote);
       }
     }
-
   }
 
   if(timediff2 > 2*modbusTimer) {
