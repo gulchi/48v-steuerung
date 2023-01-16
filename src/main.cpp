@@ -51,8 +51,8 @@ union conv
 } conv;
 
 uint16_t targetPort = 502;
-uint8_t targetSID = 1;
-uint16_t addr = 1;
+uint8_t targetSID = 100;
+uint16_t addr = 841;
 uint16_t words = 4;
 
 #define REG_COUNT 4
