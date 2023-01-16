@@ -12,7 +12,7 @@
 #endif
 
 // -- Initial name of the Thing. Used e.g. as SSID of the own Access Point.
-const char thingName[] = "testThing";
+const char thingName[] = "HeaterControl";
 
 // -- Initial password to connect to the Thing, when it creates an own Access Point.
 const char wifiInitialApPassword[] = "smrtTHNG8266";
@@ -54,7 +54,7 @@ void handleRoot();
 // -- Callback methods.
 void configSaved();
 bool formValidator(iotwebconf::WebRequestWrapper* webRequestWrapper);
-void getModbusValues();
+
 bool cb(Modbus::ResultCode event, uint16_t transactionId, void* data);
 
 DNSServer dnsServer;
@@ -185,7 +185,7 @@ void loop()
   timediff = (currentTime > lastModbusCall) ? currentTime - lastModbusCall : lastModbusCall - currentTime;
 
   if(timediff > modbusTimer) {
-    lastModbusCall = millis();
+    lastModbusCall = currentTime;
 
     
 
@@ -296,6 +296,7 @@ void handleRoot()
 void configSaved()
 {
   Serial.println("Configuration was updated.");
+
   remote = IPAddress(atoi(intParamValueIP1), atoi(intParamValueIP2), atoi(intParamValueIP3), atoi(intParamValueIP4));
 
   currentHeater1 = atoi(intParamValueCurr1);
