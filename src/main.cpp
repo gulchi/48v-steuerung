@@ -88,6 +88,8 @@ IPAddress remote;
 Modbus::ResultCode modbusresult;
 
 uint16 res[REG_COUNT];
+uint16 res1;
+uint16 res2;
 
 int currentHeater1;
 int currentHeater2;
@@ -121,6 +123,8 @@ IotWebConfNumberParameter intParamMinCurr4 = IotWebConfNumberParameter("Min Curr
 float batteryCurrent = 0;
 float batterySOC = 0;
 float estimatedCurrent = 0;
+float pvCurrent = 0;
+float vebusCurrent = 0;
 
 unsigned long modbusSuccessCounter = 0;
 unsigned long modbusErrorCounter = 0;
@@ -208,7 +212,9 @@ void loop()
     if(iotWebConf.getState() == iotwebconf::OnLine) {
       Serial.println("Modbus read input register");
       if(mb.isConnected(remote)) {
-        mb.readIreg(remote, addr, res, REG_COUNT, cb, targetSID);
+        mb.readIreg(remote, 841, res, REG_COUNT, cb, targetSID);
+        mb.readIreg(remote, 851, &res1, 1, cb, targetSID);
+        mb.readIreg(remote, 865, &res2, 1, cb, targetSID);
       } else {
         Serial.println("Reconnect to Modbus Server");
         mb.connect(remote);
@@ -220,7 +226,10 @@ void loop()
     lastHeaterCall = currentTime;
     Serial.println("Update output pins");
 
-    estimatedCurrent = batteryCurrent + (16*numberOfActiveHeater);
+    //estimatedCurrent = batteryCurrent + (16*numberOfActiveHeater);
+    estimatedCurrent = pvCurrent + vebusCurrent;
+
+    if(vebusCurrent > 0) estimatedCurrent = pvCurrent;
 
     numberOfActiveHeater = 0;
 
@@ -262,6 +271,8 @@ bool cb(Modbus::ResultCode event, uint16_t transactionId, void* data) { // Modbu
     Serial.printf("Modbus result: %02X\n", event);  // Display Modbus error code
     batteryCurrent = 0;
     batterySOC = 0;
+    pvCurrent = 0;
+    vebusCurrent = 0;
     modbusErrorCounter++;
   }
   if (event == Modbus::EX_TIMEOUT) {    // If Transaction timeout took place
@@ -276,6 +287,12 @@ bool cb(Modbus::ResultCode event, uint16_t transactionId, void* data) { // Modbu
     conv.uint_val = res[0];
 
     batteryCurrent = ((float)conv.int_val) / 10;
+
+    conv.uint_val = res1;
+    pvCurrent = ((float)conv.int_val) / 10;
+
+    conv.uint_val = res2;
+    vebusCurrent = ((float)conv.int_val) / 10;
   }
   return true;
 }
@@ -298,23 +315,27 @@ void handleRoot()
   s += remote.toString();
   s += "<li>Min SOC: ";
   s += minBatSOC;
-  s += "<li>Min Current Heater 1: ";
+  s += " &#037;<li>Min Current Heater 1: ";
   s += currentHeater1;
-  s += "<li>Min Current Heater 2: ";
+  s += " A<li>Min Current Heater 2: ";
   s += currentHeater2;
-  s += "<li>Min Current Heater 3: ";
+  s += " A<li>Min Current Heater 3: ";
   s += currentHeater3;
-  s += "<li>Min Current Heater 4: ";
+  s += " A<li>Min Current Heater 4: ";
   s += currentHeater4;
-  s += "<li>Actual SOC: ";
+  s += " A<li>Actual SOC: ";
   s += batterySOC;
-  s += "<li>Actual Current: ";
+  s += " &#037;<li>Battery Current: ";
   s += batteryCurrent;
-  s += "<li>Number of Active Heaters: ";
+  s += " A<li>PV Current: ";
+  s += pvCurrent;
+  s += " A<li>VE.Bus Current: ";
+  s += vebusCurrent;
+  s += " A<li>Number of Active Heaters: ";
   s += numberOfActiveHeater;
   s += "<li>Estimated Current: ";
   s += estimatedCurrent;
-  s += "<li>Modbus Result: ";
+  s += " A<li>Modbus Result: ";
   s += modbusresult;
   s += "<li>Modbus Success Counter: ";
   s += modbusSuccessCounter;
