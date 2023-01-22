@@ -28,7 +28,7 @@ const char wifiInitialApPassword[] = "smrtTHNG8266";
 #define NUMBER_LEN 5
 
 // -- Configuration specific key. The value should be modified if config structure was changed.
-#define CONFIG_VERSION "008"
+#define CONFIG_VERSION "009"
 
 // -- When CONFIG_PIN is pulled to ground on startup, the Thing will use the initial
 //      password to buld an AP. (E.g. in case of lost password)
@@ -104,10 +104,10 @@ IotWebConf iotWebConf(thingName, &dnsServer, &server, wifiInitialApPassword, CON
 // -- You can also use namespace formats e.g.: iotwebconf::TextParameter
 
 IotWebConfParameterGroup group1 = IotWebConfParameterGroup("group1", "Cerbo");
-IotWebConfNumberParameter intParamIP1 = IotWebConfNumberParameter("IP Adress Part 1", "ipaddr1", intParamValueIP1, NUMBER_LEN, "192", "0..255", "min='1' max='255' step='1'");
-IotWebConfNumberParameter intParamIP2 = IotWebConfNumberParameter("IP Adress Part 2", "ipaddr2", intParamValueIP2, NUMBER_LEN, "168", "0..255", "min='1' max='255' step='1'");
-IotWebConfNumberParameter intParamIP3 = IotWebConfNumberParameter("IP Adress Part 3", "ipaddr3", intParamValueIP3, NUMBER_LEN, "1", "0..255", "min='1' max='255' step='1'");
-IotWebConfNumberParameter intParamIP4 = IotWebConfNumberParameter("IP Adress Part 4", "ipaddr4", intParamValueIP4, NUMBER_LEN, "41", "0..255", "min='1' max='255' step='1'");
+IotWebConfNumberParameter intParamIP1 = IotWebConfNumberParameter("IP Adress Part 1", "ipaddr1", intParamValueIP1, NUMBER_LEN, "192", "0..255", "min='0' max='255' step='1'");
+IotWebConfNumberParameter intParamIP2 = IotWebConfNumberParameter("IP Adress Part 2", "ipaddr2", intParamValueIP2, NUMBER_LEN, "168", "0..255", "min='0' max='255' step='1'");
+IotWebConfNumberParameter intParamIP3 = IotWebConfNumberParameter("IP Adress Part 3", "ipaddr3", intParamValueIP3, NUMBER_LEN, "1", "0..255", "min='0' max='255' step='1'");
+IotWebConfNumberParameter intParamIP4 = IotWebConfNumberParameter("IP Adress Part 4", "ipaddr4", intParamValueIP4, NUMBER_LEN, "41", "0..255", "min='0' max='255' step='1'");
 
 
 // -- We can add a legend to the separator
@@ -284,7 +284,6 @@ bool cb(Modbus::ResultCode event, uint16_t transactionId, void* data) { // Modbu
     batterySOC = res[2];
 
     conv.uint_val = res[0];
-
     batteryCurrent = ((float)conv.int_val) / 10;
 
     conv.uint_val = res1;
