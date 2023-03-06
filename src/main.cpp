@@ -28,7 +28,7 @@ const char wifiInitialApPassword[] = "smrtTHNG8266";
 #define NUMBER_LEN 5
 
 // -- Configuration specific key. The value should be modified if config structure was changed.
-#define CONFIG_VERSION "009"
+#define CONFIG_VERSION "010"
 
 // -- When CONFIG_PIN is pulled to ground on startup, the Thing will use the initial
 //      password to buld an AP. (E.g. in case of lost password)
@@ -39,10 +39,16 @@ const char wifiInitialApPassword[] = "smrtTHNG8266";
 //      when connected to the Wifi it will turn off (kept HIGH).
 #define STATUS_PIN LED_BUILTIN
 
-#define PIN_HEATER_1 D5
-#define PIN_HEATER_2 D6
-#define PIN_HEATER_3 D7
-#define PIN_HEATER_4 D8
+#define PIN_HEATER_A1 D5
+#define PIN_HEATER_A2 D6
+#define PIN_HEATER_A3 D7
+#define PIN_HEATER_B1 D8
+#define PIN_HEATER_B2 D4
+#define PIN_HEATER_B3 D3
+
+#define ENABLE_PIN_A D2
+#define ENABLE_PIN_B D1
+
 
 union conv 
 {
@@ -68,10 +74,12 @@ WebServer server(80);
 
 char intParamValueminSOC[NUMBER_LEN];
 
-char intParamValueCurr1[NUMBER_LEN];
-char intParamValueCurr2[NUMBER_LEN];
-char intParamValueCurr3[NUMBER_LEN];
-char intParamValueCurr4[NUMBER_LEN];
+char intParamValueCurrA1[NUMBER_LEN];
+char intParamValueCurrA2[NUMBER_LEN];
+char intParamValueCurrA3[NUMBER_LEN];
+char intParamValueCurrB1[NUMBER_LEN];
+char intParamValueCurrB2[NUMBER_LEN];
+char intParamValueCurrB3[NUMBER_LEN];
 
 char intParamValueIP1[NUMBER_LEN];
 char intParamValueIP2[NUMBER_LEN];
@@ -90,10 +98,12 @@ uint16 res[REG_COUNT];
 uint16 res1;
 uint16 res2;
 
-int currentHeater1;
-int currentHeater2;
-int currentHeater3;
-int currentHeater4;
+int currentHeaterA1;
+int currentHeaterA2;
+int currentHeaterA3;
+int currentHeaterB1;
+int currentHeaterB2;
+int currentHeaterB3;
 
 int numberOfActiveHeater = 0;
 
@@ -113,10 +123,12 @@ IotWebConfNumberParameter intParamIP4 = IotWebConfNumberParameter("IP Adress Par
 // -- We can add a legend to the separator
 IotWebConfParameterGroup group2 = IotWebConfParameterGroup("group2", "Current");
 IotWebConfNumberParameter intParamMinSOC = IotWebConfNumberParameter("Min SOC", "minSOC", intParamValueminSOC, NUMBER_LEN, "20", "1..100", "min='1' max='100' step='1'");
-IotWebConfNumberParameter intParamMinCurr1 = IotWebConfNumberParameter("Min Current Heater 1", "minCurrent1", intParamValueCurr1, NUMBER_LEN, "20", "1..100", "min='1' max='100' step='1'");
-IotWebConfNumberParameter intParamMinCurr2 = IotWebConfNumberParameter("Min Current Heater 2", "minCurrent2", intParamValueCurr2, NUMBER_LEN, "36", "1..100", "min='1' max='100' step='1'");
-IotWebConfNumberParameter intParamMinCurr3 = IotWebConfNumberParameter("Min Current Heater 3", "minCurrent3", intParamValueCurr3, NUMBER_LEN, "52", "1..100", "min='1' max='100' step='1'");
-IotWebConfNumberParameter intParamMinCurr4 = IotWebConfNumberParameter("Min Current Heater 4", "minCurrent4", intParamValueCurr4, NUMBER_LEN, "68", "1..100", "min='1' max='100' step='1'");
+IotWebConfNumberParameter intParamMinCurrA1 = IotWebConfNumberParameter("Current Heater A1", "usedCurrentA1", intParamValueCurrA1, NUMBER_LEN, "0", "0..100", "min='0' max='100' step='1'");
+IotWebConfNumberParameter intParamMinCurrA2 = IotWebConfNumberParameter("Current Heater A2", "usedCurrentA2", intParamValueCurrA2, NUMBER_LEN, "0", "0..100", "min='0' max='100' step='1'");
+IotWebConfNumberParameter intParamMinCurrA3 = IotWebConfNumberParameter("Current Heater A3", "usedCurrentA3", intParamValueCurrA3, NUMBER_LEN, "0", "0..100", "min='0' max='100' step='1'");
+IotWebConfNumberParameter intParamMinCurrB1 = IotWebConfNumberParameter("Current Heater B1", "usedCurrentB1", intParamValueCurrB1, NUMBER_LEN, "0", "0..100", "min='0' max='100' step='1'");
+IotWebConfNumberParameter intParamMinCurrB2 = IotWebConfNumberParameter("Current Heater B2", "usedCurrentB2", intParamValueCurrB2, NUMBER_LEN, "0", "0..100", "min='0' max='100' step='1'");
+IotWebConfNumberParameter intParamMinCurrB3 = IotWebConfNumberParameter("Current Heater B3", "usedCurrentB3", intParamValueCurrB3, NUMBER_LEN, "0", "0..100", "min='0' max='100' step='1'");
 
 
 float batteryCurrent = 0;
@@ -127,6 +139,13 @@ float vebusCurrent = 0;
 
 unsigned long modbusSuccessCounter = 0;
 unsigned long modbusErrorCounter = 0;
+
+bool ha1 = false;
+bool ha2 = false;
+bool ha3 = false;
+bool hb1 = false;
+bool hb2 = false;
+bool hb3 = false;
 
 
 ModbusTCP mb;  //ModbusTCP object
@@ -149,10 +168,12 @@ void setup()
 
   group2.addItem(&intParamMinSOC);
   
-  group2.addItem(&intParamMinCurr1);
-  group2.addItem(&intParamMinCurr2);
-  group2.addItem(&intParamMinCurr3);
-  group2.addItem(&intParamMinCurr4);
+  group2.addItem(&intParamMinCurrA1);
+  group2.addItem(&intParamMinCurrA2);
+  group2.addItem(&intParamMinCurrA3);
+  group2.addItem(&intParamMinCurrB1);
+  group2.addItem(&intParamMinCurrB2);
+  group2.addItem(&intParamMinCurrB3);
 
 
   iotWebConf.setStatusPin(STATUS_PIN);
@@ -176,26 +197,36 @@ void setup()
 
   mb.client();
 
-  pinMode(PIN_HEATER_1, OUTPUT);
-  pinMode(PIN_HEATER_2, OUTPUT);
-  pinMode(PIN_HEATER_3, OUTPUT);
-  pinMode(PIN_HEATER_4, OUTPUT);
+  pinMode(PIN_HEATER_A1, OUTPUT);
+  pinMode(PIN_HEATER_A2, OUTPUT);
+  pinMode(PIN_HEATER_A3, OUTPUT);
+  pinMode(PIN_HEATER_B1, OUTPUT);
+  pinMode(PIN_HEATER_B2, OUTPUT);
+  pinMode(PIN_HEATER_B3, OUTPUT);
+
+  pinMode(ENABLE_PIN_A, INPUT_PULLDOWN_16);
+  pinMode(ENABLE_PIN_B, INPUT_PULLDOWN_16);
 
   remote = IPAddress(atoi(intParamValueIP1), atoi(intParamValueIP2), atoi(intParamValueIP3), atoi(intParamValueIP4));
 
-  currentHeater1 = atoi(intParamValueCurr1);
-  currentHeater2 = atoi(intParamValueCurr2);
-  currentHeater3 = atoi(intParamValueCurr3);
-  currentHeater4 = atoi(intParamValueCurr4);
+  currentHeaterA1 = atoi(intParamValueCurrA1);
+  currentHeaterA2 = atoi(intParamValueCurrA2);
+  currentHeaterA3 = atoi(intParamValueCurrA3);
+  currentHeaterB1 = atoi(intParamValueCurrB1);
+  currentHeaterB2 = atoi(intParamValueCurrB2);
+  currentHeaterB3 = atoi(intParamValueCurrB3);
+
 
   minBatSOC = atoi(intParamValueminSOC);
 }
 
 void loop() 
 {
+  float remainingCurrent;
   unsigned long currentTime = millis();
   unsigned long timediff;
   unsigned long timediff2;
+
   
   
   // -- doLoop should be called as frequently as possible.
@@ -225,42 +256,103 @@ void loop()
     lastHeaterCall = currentTime;
     Serial.println("Update output pins");
 
-    //estimatedCurrent = batteryCurrent + (16*numberOfActiveHeater);
     estimatedCurrent = pvCurrent + vebusCurrent;
-
+    
     if(vebusCurrent > 0) estimatedCurrent = pvCurrent;
 
+    remainingCurrent = estimatedCurrent;
     numberOfActiveHeater = 0;
 
-    if(batteryCurrent > 0 && estimatedCurrent > currentHeater1) {
-      digitalWrite(PIN_HEATER_1, HIGH);
-      numberOfActiveHeater++;
-    } else {
-      digitalWrite(PIN_HEATER_1, LOW);
-    }
+    if(batterySOC > minBatSOC) {
 
-    if(batteryCurrent > 0 && estimatedCurrent > currentHeater2 && batterySOC > minBatSOC) {
-      digitalWrite(PIN_HEATER_2, HIGH);
-      numberOfActiveHeater++;
-    } else {
-      digitalWrite(PIN_HEATER_2, LOW);
-    }
+      if(remainingCurrent > currentHeaterA3 && currentHeaterA3 > 0 && batteryCurrent > 0) {
+        remainingCurrent -= currentHeaterA3;
+        numberOfActiveHeater++;
+        ha3 = true;
+      } else {
+        ha3 = false;
+      }
 
-    if(batteryCurrent > 0 && estimatedCurrent > currentHeater3 && batterySOC > minBatSOC) {
-      digitalWrite(PIN_HEATER_3, HIGH);
-      numberOfActiveHeater++;
-    } else {
-      digitalWrite(PIN_HEATER_3, LOW);
-    }
+      if(remainingCurrent > currentHeaterA2 && currentHeaterA2 > 0 && batteryCurrent > 0) {
+        remainingCurrent -= currentHeaterA2;
+        numberOfActiveHeater++;
+        ha2 = true;
+      } else {
+        ha2 = false;
+      }
 
-    if(batteryCurrent > 0 && estimatedCurrent > currentHeater4 && batterySOC > minBatSOC) {
-      digitalWrite(PIN_HEATER_4, HIGH);
-      numberOfActiveHeater++;
-    } else {
-      digitalWrite(PIN_HEATER_4, LOW);
-    }
+      if(remainingCurrent > currentHeaterA1 && currentHeaterA1 > 0 && batteryCurrent > 0) {
+        remainingCurrent -= currentHeaterA1;
+        numberOfActiveHeater++;
+        ha1 = true;
+      } else {
+        ha1 = false;
+      }
 
+      if(remainingCurrent > currentHeaterB3 && currentHeaterB3 > 0 && batteryCurrent > 0) {
+        remainingCurrent -= currentHeaterB3;
+        numberOfActiveHeater++;
+        hb3 = true;
+      } else {
+        hb3 = false;
+      }
+
+      if(remainingCurrent > currentHeaterB2 && currentHeaterB2 > 0 && batteryCurrent > 0) {
+        remainingCurrent -= currentHeaterB2;
+        numberOfActiveHeater++;
+        hb2 = true;
+      } else {
+        hb2 = false;
+      }
+
+      if(remainingCurrent > currentHeaterB1 && currentHeaterB1 > 0 && batteryCurrent > 0) {
+        remainingCurrent -= currentHeaterB1;
+        numberOfActiveHeater++;
+        hb1 = true;
+      } else {
+        hb1 = false;
+      }
+
+    } else {
+      ha1 = false;
+      ha2 = false;
+      ha3 = false;
+      hb1 = false;
+      hb2 = false;
+      hb3 = false;
+    }
   }
+
+  if(digitalRead(ENABLE_PIN_A) != HIGH) {
+    ha1 = false;
+    ha2 = false;
+    ha3 = false;
+  }
+
+  if(digitalRead(ENABLE_PIN_B) != HIGH) {
+    hb1 = false;
+    hb2 = false;
+    hb3 = false;
+  }
+
+  if(ha1) digitalWrite(PIN_HEATER_A1, HIGH);
+  else digitalWrite(PIN_HEATER_A1, LOW);
+
+  if(ha2) digitalWrite(PIN_HEATER_A2, HIGH);
+  else digitalWrite(PIN_HEATER_A2, LOW);
+
+  if(ha3) digitalWrite(PIN_HEATER_A3, HIGH);
+  else digitalWrite(PIN_HEATER_A3, LOW);
+
+  if(hb1) digitalWrite(PIN_HEATER_B1, HIGH);
+  else digitalWrite(PIN_HEATER_B1, LOW);
+
+  if(hb2) digitalWrite(PIN_HEATER_B2, HIGH);
+  else digitalWrite(PIN_HEATER_B2, LOW);
+
+  if(hb3) digitalWrite(PIN_HEATER_B3, HIGH);
+  else digitalWrite(PIN_HEATER_B3, LOW);
+
 }
 
 bool cb(Modbus::ResultCode event, uint16_t transactionId, void* data) { // Modbus Transaction callback
@@ -313,14 +405,18 @@ void handleRoot()
   s += remote.toString();
   s += "<li>Min SOC: ";
   s += minBatSOC;
-  s += " &#037;<li>Min Current Heater 1: ";
-  s += currentHeater1;
-  s += " A<li>Min Current Heater 2: ";
-  s += currentHeater2;
-  s += " A<li>Min Current Heater 3: ";
-  s += currentHeater3;
-  s += " A<li>Min Current Heater 4: ";
-  s += currentHeater4;
+  s += " &#037;<li>Min Current Heater A1: ";
+  s += currentHeaterA1;
+  s += " A<li>Min Current Heater A2: ";
+  s += currentHeaterA2;
+  s += " A<li>Min Current Heater A3: ";
+  s += currentHeaterA3;
+  s += " A<li>Min Current Heater B1: ";
+  s += currentHeaterB1;
+  s += " A<li>Min Current Heater B2: ";
+  s += currentHeaterB2;
+  s += " A<li>Min Current Heater B3: ";
+  s += currentHeaterB3;
   s += " A<li>Actual SOC: ";
   s += batterySOC;
   s += " &#037;<li>Battery Current: ";
@@ -341,6 +437,19 @@ void handleRoot()
   s += modbusErrorCounter;
   s += "<li>IotWebConf State: ";
   s += iotWebConf.getState();
+  s += "<li>A1 State: ";
+  s += ha1;
+  s += "<li>A2 State: ";
+  s += ha2;
+  s += "<li>A3 State: ";
+  s += ha3;
+  s += "<li>B1 State: ";
+  s += hb1;
+  s += "<li>B2 State: ";
+  s += hb2;
+  s += "<li>B3 State: ";
+  s += hb3;
+  
   s += "</ul>";
   s += "Go to <a href='config'>configure page</a> to change values.";
   s += "</body></html>\n";
@@ -354,10 +463,12 @@ void configSaved()
 
   remote = IPAddress(atoi(intParamValueIP1), atoi(intParamValueIP2), atoi(intParamValueIP3), atoi(intParamValueIP4));
 
-  currentHeater1 = atoi(intParamValueCurr1);
-  currentHeater2 = atoi(intParamValueCurr2);
-  currentHeater3 = atoi(intParamValueCurr3);
-  currentHeater4 = atoi(intParamValueCurr4);
+  currentHeaterA1 = atoi(intParamValueCurrA1);
+  currentHeaterA2 = atoi(intParamValueCurrA2);
+  currentHeaterA3 = atoi(intParamValueCurrA3);
+  currentHeaterB1 = atoi(intParamValueCurrB1);
+  currentHeaterB2 = atoi(intParamValueCurrB2);
+  currentHeaterB3 = atoi(intParamValueCurrB3);
   minBatSOC = atoi(intParamValueminSOC);
 }
 
