@@ -147,6 +147,8 @@ bool hb1 = false;
 bool hb2 = false;
 bool hb3 = false;
 
+bool enableA = false;
+bool enableB = false;
 
 ModbusTCP mb;  //ModbusTCP object
 
@@ -204,8 +206,8 @@ void setup()
   pinMode(PIN_HEATER_B2, OUTPUT);
   pinMode(PIN_HEATER_B3, OUTPUT);
 
-  pinMode(ENABLE_PIN_A, INPUT_PULLDOWN_16);
-  pinMode(ENABLE_PIN_B, INPUT_PULLDOWN_16);
+  pinMode(ENABLE_PIN_A, INPUT_PULLUP);
+  pinMode(ENABLE_PIN_B, INPUT_PULLUP);
 
   remote = IPAddress(atoi(intParamValueIP1), atoi(intParamValueIP2), atoi(intParamValueIP3), atoi(intParamValueIP4));
 
@@ -252,6 +254,9 @@ void loop()
     }
   }
 
+  enableA = digitalRead(ENABLE_PIN_A) == LOW;
+  enableB = digitalRead(ENABLE_PIN_B) == LOW;
+
   if(timediff2 > 2*modbusTimer) {
     lastHeaterCall = currentTime;
     Serial.println("Update output pins");
@@ -265,7 +270,7 @@ void loop()
 
     if(batterySOC > minBatSOC) {
 
-      if(remainingCurrent > currentHeaterA3 && currentHeaterA3 > 0 && batteryCurrent > 0) {
+      if(remainingCurrent > currentHeaterA3 && currentHeaterA3 > 0 && batteryCurrent > 0 && enableA) {
         remainingCurrent -= currentHeaterA3;
         numberOfActiveHeater++;
         ha3 = true;
@@ -273,7 +278,7 @@ void loop()
         ha3 = false;
       }
 
-      if(remainingCurrent > currentHeaterA2 && currentHeaterA2 > 0 && batteryCurrent > 0) {
+      if(remainingCurrent > currentHeaterA2 && currentHeaterA2 > 0 && batteryCurrent > 0 && enableA) {
         remainingCurrent -= currentHeaterA2;
         numberOfActiveHeater++;
         ha2 = true;
@@ -281,7 +286,7 @@ void loop()
         ha2 = false;
       }
 
-      if(remainingCurrent > currentHeaterA1 && currentHeaterA1 > 0 && batteryCurrent > 0) {
+      if(remainingCurrent > currentHeaterA1 && currentHeaterA1 > 0 && batteryCurrent > 0 && enableA) {
         remainingCurrent -= currentHeaterA1;
         numberOfActiveHeater++;
         ha1 = true;
@@ -289,7 +294,7 @@ void loop()
         ha1 = false;
       }
 
-      if(remainingCurrent > currentHeaterB3 && currentHeaterB3 > 0 && batteryCurrent > 0) {
+      if(remainingCurrent > currentHeaterB3 && currentHeaterB3 > 0 && batteryCurrent > 0 && enableB) {
         remainingCurrent -= currentHeaterB3;
         numberOfActiveHeater++;
         hb3 = true;
@@ -297,7 +302,7 @@ void loop()
         hb3 = false;
       }
 
-      if(remainingCurrent > currentHeaterB2 && currentHeaterB2 > 0 && batteryCurrent > 0) {
+      if(remainingCurrent > currentHeaterB2 && currentHeaterB2 > 0 && batteryCurrent > 0 && enableB) {
         remainingCurrent -= currentHeaterB2;
         numberOfActiveHeater++;
         hb2 = true;
@@ -305,7 +310,7 @@ void loop()
         hb2 = false;
       }
 
-      if(remainingCurrent > currentHeaterB1 && currentHeaterB1 > 0 && batteryCurrent > 0) {
+      if(remainingCurrent > currentHeaterB1 && currentHeaterB1 > 0 && batteryCurrent > 0 && enableB) {
         remainingCurrent -= currentHeaterB1;
         numberOfActiveHeater++;
         hb1 = true;
@@ -323,13 +328,13 @@ void loop()
     }
   }
 
-  if(digitalRead(ENABLE_PIN_A) != HIGH) {
+  if(!enableA) {
     ha1 = false;
     ha2 = false;
     ha3 = false;
   }
 
-  if(digitalRead(ENABLE_PIN_B) != HIGH) {
+  if(!enableB) {
     hb1 = false;
     hb2 = false;
     hb3 = false;
@@ -449,6 +454,10 @@ void handleRoot()
   s += hb2;
   s += "<li>B3 State: ";
   s += hb3;
+  s += "<li>Group A Enable: ";
+  s += enableA;
+  s += "<li>Group B Enable: ";
+  s += enableB;
   
   s += "</ul>";
   s += "Go to <a href='config'>configure page</a> to change values.";
