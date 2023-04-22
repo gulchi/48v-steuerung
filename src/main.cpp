@@ -446,6 +446,10 @@ void handleRoot()
   s += batterySOC;
   s += " &#037;<li>Battery Current: ";
   s += batteryCurrent;
+  s += " A<li>Buffer SOC: ";
+  s += bufferSOC;
+  s += " &#037;<li>Buffer Current: ";
+  s += bufferCurrent;
   s += " A<li>PV Current: ";
   s += pvCurrent;
   s += " A<li>VE.Bus Current: ";
