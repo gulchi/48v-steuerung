@@ -81,6 +81,9 @@ char intParamValueCurrB1[NUMBER_LEN];
 char intParamValueCurrB2[NUMBER_LEN];
 char intParamValueCurrB3[NUMBER_LEN];
 
+char intParamValueBufferSOC[NUMBER_LEN];
+char intParamValueBufferCurrent[NUMBER_LEN];
+
 char intParamValueIP1[NUMBER_LEN];
 char intParamValueIP2[NUMBER_LEN];
 char intParamValueIP3[NUMBER_LEN];
@@ -104,6 +107,7 @@ int currentHeaterA3;
 int currentHeaterB1;
 int currentHeaterB2;
 int currentHeaterB3;
+
 
 int numberOfActiveHeater = 0;
 
@@ -130,12 +134,18 @@ IotWebConfNumberParameter intParamMinCurrB1 = IotWebConfNumberParameter("Current
 IotWebConfNumberParameter intParamMinCurrB2 = IotWebConfNumberParameter("Current Heater B2", "usedCurrentB2", intParamValueCurrB2, NUMBER_LEN, "0", "0..100", "min='0' max='100' step='1'");
 IotWebConfNumberParameter intParamMinCurrB3 = IotWebConfNumberParameter("Current Heater B3", "usedCurrentB3", intParamValueCurrB3, NUMBER_LEN, "0", "0..100", "min='0' max='100' step='1'");
 
+IotWebConfNumberParameter intParamBufferSOC = IotWebConfNumberParameter("Buffer SOC", "buffersoc", intParamValueBufferSOC, NUMBER_LEN, "90", "0..100", "min='0' max='100' step='1'");
+IotWebConfNumberParameter intParamBufferCurrent = IotWebConfNumberParameter("Buffer Current", "buffercurrent", intParamValueBufferCurrent, NUMBER_LEN, "24", "0..100", "min='0' max='100' step='1'");
+
 
 float batteryCurrent = 0;
 float batterySOC = 0;
 float estimatedCurrent = 0;
 float pvCurrent = 0;
 float vebusCurrent = 0;
+
+float bufferSOC;
+float bufferCurrent;
 
 unsigned long modbusSuccessCounter = 0;
 unsigned long modbusErrorCounter = 0;
@@ -176,6 +186,8 @@ void setup()
   group2.addItem(&intParamMinCurrB1);
   group2.addItem(&intParamMinCurrB2);
   group2.addItem(&intParamMinCurrB3);
+  group2.addItem(&intParamBufferSOC);
+  group2.addItem(&intParamBufferCurrent);
 
 
   iotWebConf.setStatusPin(STATUS_PIN);
@@ -218,8 +230,10 @@ void setup()
   currentHeaterB2 = atoi(intParamValueCurrB2);
   currentHeaterB3 = atoi(intParamValueCurrB3);
 
-
   minBatSOC = atoi(intParamValueminSOC);
+
+  bufferSOC = atoi(intParamValueBufferSOC);
+  bufferCurrent = atoi(intParamValueBufferCurrent);
 }
 
 void loop() 
@@ -267,6 +281,12 @@ void loop()
 
     remainingCurrent = estimatedCurrent;
     numberOfActiveHeater = 0;
+
+    if(batterySOC > bufferSOC) {
+      if(remainingCurrent < 0) remainingCurrent = 0;
+
+      remainingCurrent += bufferCurrent;
+    }
 
     if(batterySOC > minBatSOC) {
 
@@ -479,6 +499,8 @@ void configSaved()
   currentHeaterB2 = atoi(intParamValueCurrB2);
   currentHeaterB3 = atoi(intParamValueCurrB3);
   minBatSOC = atoi(intParamValueminSOC);
+  bufferSOC = atoi(intParamValueBufferSOC);
+  bufferCurrent = atoi(intParamValueBufferCurrent);
 }
 
 bool formValidator(iotwebconf::WebRequestWrapper* webRequestWrapper)
