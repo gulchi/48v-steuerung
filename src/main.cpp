@@ -29,7 +29,7 @@ const char wifiInitialApPassword[] = "smrtTHNG8266";
 #define NUMBER_LEN 5
 
 // -- Configuration specific key. The value should be modified if config structure was changed.
-#define CONFIG_VERSION "014"
+#define CONFIG_VERSION "015"
 
 // -- When CONFIG_PIN is pulled to ground on startup, the Thing will use the initial
 //      password to buld an AP. (E.g. in case of lost password)
@@ -91,6 +91,7 @@ char intParamValueCurrB1[NUMBER_LEN];
 char intParamValueCurrB2[NUMBER_LEN];
 char intParamValueCurrB3[NUMBER_LEN];
 
+char intParamValueTimezone[NUMBER_LEN];
 char intParamValueSunsetOffset[NUMBER_LEN];
 
 char intParamValueBufferSOC[NUMBER_LEN];
@@ -140,7 +141,7 @@ IotWebConfNumberParameter intParamIP4 = IotWebConfNumberParameter("IP Adress Par
 
 
 // -- We can add a legend to the separator
-IotWebConfParameterGroup group2 = IotWebConfParameterGroup("group2", "Current");
+IotWebConfParameterGroup group2 = IotWebConfParameterGroup("group2", "Heater Config");
 IotWebConfNumberParameter intParamMinSOC = IotWebConfNumberParameter("Min SOC", "minSOC", intParamValueminSOC, NUMBER_LEN, "20", "1..100", "min='1' max='100' step='1'");
 IotWebConfNumberParameter intParamMinCurrA1 = IotWebConfNumberParameter("Current Heater A1", "ucA1", intParamValueCurrA1, NUMBER_LEN, "0", "0..100", "min='0' max='100' step='1'");
 IotWebConfNumberParameter intParamMinCurrA2 = IotWebConfNumberParameter("Current Heater A2", "ucA2", intParamValueCurrA2, NUMBER_LEN, "0", "0..100", "min='0' max='100' step='1'");
@@ -148,13 +149,15 @@ IotWebConfNumberParameter intParamMinCurrA3 = IotWebConfNumberParameter("Current
 IotWebConfNumberParameter intParamMinCurrB1 = IotWebConfNumberParameter("Current Heater B1", "ucB1", intParamValueCurrB1, NUMBER_LEN, "0", "0..100", "min='0' max='100' step='1'");
 IotWebConfNumberParameter intParamMinCurrB2 = IotWebConfNumberParameter("Current Heater B2", "ucB2", intParamValueCurrB2, NUMBER_LEN, "0", "0..100", "min='0' max='100' step='1'");
 IotWebConfNumberParameter intParamMinCurrB3 = IotWebConfNumberParameter("Current Heater B3", "ucB3", intParamValueCurrB3, NUMBER_LEN, "0", "0..100", "min='0' max='100' step='1'");
-
-IotWebConfNumberParameter intParamSunsetOffset = IotWebConfNumberParameter("Sunset Offset [h]", "sunoffset", intParamValueSunsetOffset, NUMBER_LEN, "-6", "-6..6", "min='-6' max='6' step='1'");
-
-
-
 IotWebConfNumberParameter intParamBufferSOC = IotWebConfNumberParameter("Buffer SOC", "bufsoc", intParamValueBufferSOC, NUMBER_LEN, "90", "0..100", "min='0' max='100' step='1'");
 IotWebConfNumberParameter intParamBufferCurrent = IotWebConfNumberParameter("Buffer Current", "bufcur", intParamValueBufferCurrent, NUMBER_LEN, "24", "0..100", "min='0' max='100' step='1'");
+
+
+IotWebConfParameterGroup group3 = IotWebConfParameterGroup("group3", "Time Config");
+
+IotWebConfNumberParameter intParamSunsetOffset = IotWebConfNumberParameter("Sunset Offset [h]", "sunoffset", intParamValueSunsetOffset, NUMBER_LEN, "-6", "-6..6", "min='-6' max='6' step='1'");
+IotWebConfNumberParameter intParamTimezone = IotWebConfNumberParameter("Timezone Offset [h]", "tzoffset", intParamValueTimezone, NUMBER_LEN, "2", "-12..12", "min='-12' max='12' step='1'");
+
 
 IotWebConfParameterGroup mqttGroup = IotWebConfParameterGroup("mqtt", "MQTT configuration");
 IotWebConfTextParameter mqttServerParam = IotWebConfTextParameter("MQTT server", "mqttServer", mqttServerValue, STRING_LEN);
@@ -213,7 +216,9 @@ void setup()
   group2.addItem(&intParamMinCurrB3);
   group2.addItem(&intParamBufferSOC);
   group2.addItem(&intParamBufferCurrent);
-  group2.addItem(&intParamSunsetOffset);
+  
+  group3.addItem(&intParamSunsetOffset);
+  group3.addItem(&intParamTimezone);
 
   mqttGroup.addItem(&mqttServerParam);
   mqttGroup.addItem(&mqttUserNameParam);
@@ -225,6 +230,7 @@ void setup()
 
   iotWebConf.addParameterGroup(&group1);
   iotWebConf.addParameterGroup(&group2);
+  iotWebConf.addParameterGroup(&group3);
   iotWebConf.addParameterGroup(&mqttGroup);
   iotWebConf.setConfigSavedCallback(&configSaved);
   iotWebConf.setFormValidator(&formValidator);
@@ -263,6 +269,7 @@ void loop()
   unsigned long timediff;
   unsigned long timediff2;
 
+  float timeAct;
   
   
   // -- doLoop should be called as frequently as possible.
@@ -303,7 +310,8 @@ void loop()
     // Calculate the times of sunrise, transit, and sunset, in hours (UTC)
     calcSunriseSunset(ptm->tm_year+1900, ptm->tm_mon+1, ptm->tm_mday, 48.402141, 9.988537, transit, sunrise, sunset);
 
-    inTimerange = (timeClient.getHours() > (sunrise + utc_offset + sunsetOffset)) && (timeClient.getHours() < (sunset + utc_offset - sunsetOffset));
+    timeAct = timeClient.getHours() + ((float)timeClient.getMinutes() / 60.0);
+    inTimerange = (timeAct > (sunrise + utc_offset + sunsetOffset)) && (timeAct < (sunset + utc_offset - sunsetOffset));
   
   }
 
@@ -396,6 +404,7 @@ bool cb(Modbus::ResultCode event, uint16_t transactionId, void* data) { // Modbu
 
 void reconnect() {
   timeClient.begin();
+  timeClient.setTimeOffset(utc_offset * 3600);
 }
 
 void onlineAction() {
@@ -495,8 +504,10 @@ void handleRoot()
   s += inTimerange;
   
   s += "</ul>";
-  s += "<p>";
+  s += "<p>Aktuelles Datum: ";
   s += getDateTime();
+  s += "</p><p>Tageszeit: ";
+  s += timeClient.getHours() + ((float)timeClient.getMinutes() / 60.0);
   s += "</p>";
   s += "<p>Sunrise: ";
   s += sunrise + utc_offset;
@@ -524,6 +535,8 @@ void configSaved()
   heaterCurrent[5] = atoi(intParamValueCurrB3);
 
   sunsetOffset = atoi(intParamValueSunsetOffset);
+
+  utc_offset = atoi(intParamValueTimezone);
 
   minBatSOC = atoi(intParamValueminSOC);
   bufferSOC = atoi(intParamValueBufferSOC);
