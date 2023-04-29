@@ -29,7 +29,7 @@ const char wifiInitialApPassword[] = "smrtTHNG8266";
 #define NUMBER_LEN 5
 
 // -- Configuration specific key. The value should be modified if config structure was changed.
-#define CONFIG_VERSION "015"
+#define CONFIG_VERSION "017"
 
 // -- When CONFIG_PIN is pulled to ground on startup, the Thing will use the initial
 //      password to buld an AP. (E.g. in case of lost password)
@@ -40,15 +40,15 @@ const char wifiInitialApPassword[] = "smrtTHNG8266";
 //      when connected to the Wifi it will turn off (kept HIGH).
 #define STATUS_PIN LED_BUILTIN
 
-#define PIN_HEATER_A1 D5
-#define PIN_HEATER_A2 D6
-#define PIN_HEATER_A3 D7
-#define PIN_HEATER_B1 D8
-#define PIN_HEATER_B2 D4
-#define PIN_HEATER_B3 D3
+#define PIN_HEATER_A1 D7
+#define PIN_HEATER_A2 D8
+#define PIN_HEATER_A3 D3
+#define PIN_HEATER_B1 D4
+#define PIN_HEATER_B2 D2
 
-#define ENABLE_PIN_A D2
-#define ENABLE_PIN_B D1
+
+#define ENABLE_PIN_A D5
+#define ENABLE_PIN_B D6
 
 
 union conv 
@@ -63,9 +63,7 @@ uint8_t targetSID = 100;
 
 #define REG_COUNT 4
 
-void reconnect();
-void onlineAction();
-void setOutput();
+
 void handleRoot();
 String getDateTime();
 
@@ -89,7 +87,6 @@ char intParamValueCurrA2[NUMBER_LEN];
 char intParamValueCurrA3[NUMBER_LEN];
 char intParamValueCurrB1[NUMBER_LEN];
 char intParamValueCurrB2[NUMBER_LEN];
-char intParamValueCurrB3[NUMBER_LEN];
 
 char intParamValueTimezone[NUMBER_LEN];
 char intParamValueSunsetOffset[NUMBER_LEN];
@@ -148,21 +145,23 @@ IotWebConfNumberParameter intParamMinCurrA2 = IotWebConfNumberParameter("Current
 IotWebConfNumberParameter intParamMinCurrA3 = IotWebConfNumberParameter("Current Heater A3", "ucA3", intParamValueCurrA3, NUMBER_LEN, "0", "0..100", "min='0' max='100' step='1'");
 IotWebConfNumberParameter intParamMinCurrB1 = IotWebConfNumberParameter("Current Heater B1", "ucB1", intParamValueCurrB1, NUMBER_LEN, "0", "0..100", "min='0' max='100' step='1'");
 IotWebConfNumberParameter intParamMinCurrB2 = IotWebConfNumberParameter("Current Heater B2", "ucB2", intParamValueCurrB2, NUMBER_LEN, "0", "0..100", "min='0' max='100' step='1'");
-IotWebConfNumberParameter intParamMinCurrB3 = IotWebConfNumberParameter("Current Heater B3", "ucB3", intParamValueCurrB3, NUMBER_LEN, "0", "0..100", "min='0' max='100' step='1'");
 IotWebConfNumberParameter intParamBufferSOC = IotWebConfNumberParameter("Buffer SOC", "bufsoc", intParamValueBufferSOC, NUMBER_LEN, "90", "0..100", "min='0' max='100' step='1'");
 IotWebConfNumberParameter intParamBufferCurrent = IotWebConfNumberParameter("Buffer Current", "bufcur", intParamValueBufferCurrent, NUMBER_LEN, "24", "0..100", "min='0' max='100' step='1'");
 
 
 IotWebConfParameterGroup group3 = IotWebConfParameterGroup("group3", "Time Config");
 
-IotWebConfNumberParameter intParamSunsetOffset = IotWebConfNumberParameter("Sunset Offset [h]", "sunoffset", intParamValueSunsetOffset, NUMBER_LEN, "-6", "-6..6", "min='-6' max='6' step='1'");
-IotWebConfNumberParameter intParamTimezone = IotWebConfNumberParameter("Timezone Offset [h]", "tzoffset", intParamValueTimezone, NUMBER_LEN, "2", "-12..12", "min='-12' max='12' step='1'");
+IotWebConfNumberParameter intParamSunsetOffset = IotWebConfNumberParameter("Sunset Offset", "sunoffset", intParamValueSunsetOffset, NUMBER_LEN, "-6", "-6..6", "min='-6' max='6' step='1'");
+IotWebConfNumberParameter intParamTimezone = IotWebConfNumberParameter("Timezone Offset", "tzoffset", intParamValueTimezone, NUMBER_LEN, "2", "-12..12", "min='-12' max='12' step='1'");
+
 
 
 IotWebConfParameterGroup mqttGroup = IotWebConfParameterGroup("mqtt", "MQTT configuration");
 IotWebConfTextParameter mqttServerParam = IotWebConfTextParameter("MQTT server", "mqttServer", mqttServerValue, STRING_LEN);
 IotWebConfTextParameter mqttUserNameParam = IotWebConfTextParameter("MQTT user", "mqttUser", mqttUserNameValue, STRING_LEN);
 IotWebConfPasswordParameter mqttUserPasswordParam = IotWebConfPasswordParameter("MQTT password", "mqttPass", mqttUserPasswordValue, STRING_LEN);
+
+
 
 float batteryCurrent = 0;
 float batterySOC = 0;
@@ -192,19 +191,34 @@ bool needReconnect = false;
 
 void setup() 
 {
+  bool validConfig;
   Serial.begin(115200);
   Serial.println();
   Serial.println("Starting up...");
 
+  delay(250);
+
   pinMode(CONFIG_PIN, INPUT_PULLUP);
 
-  delay(50);
+  pinMode(ENABLE_PIN_A, INPUT_PULLUP);
+  pinMode(ENABLE_PIN_B, INPUT_PULLUP);
+  
+
+  pinMode(PIN_HEATER_A1, OUTPUT);
+  pinMode(PIN_HEATER_A2, OUTPUT);
+  pinMode(PIN_HEATER_A3, OUTPUT);
+  pinMode(PIN_HEATER_B1, OUTPUT);
+  pinMode(PIN_HEATER_B2, OUTPUT);
+  
+
+  delay(250);
 
   group1.addItem(&intParamIP1);
   group1.addItem(&intParamIP2);
   group1.addItem(&intParamIP3);
   group1.addItem(&intParamIP4);
 
+  Serial.println("Created Group1");
 
   group2.addItem(&intParamMinSOC);
   
@@ -213,53 +227,74 @@ void setup()
   group2.addItem(&intParamMinCurrA3);
   group2.addItem(&intParamMinCurrB1);
   group2.addItem(&intParamMinCurrB2);
-  group2.addItem(&intParamMinCurrB3);
   group2.addItem(&intParamBufferSOC);
   group2.addItem(&intParamBufferCurrent);
+
+  Serial.println("Created Group3");
   
   group3.addItem(&intParamSunsetOffset);
   group3.addItem(&intParamTimezone);
+
+  Serial.println("Created Group3");
 
   mqttGroup.addItem(&mqttServerParam);
   mqttGroup.addItem(&mqttUserNameParam);
   mqttGroup.addItem(&mqttUserPasswordParam);
 
-
   iotWebConf.setStatusPin(STATUS_PIN);
   iotWebConf.setConfigPin(CONFIG_PIN);
+
+  Serial.println("IOTWC Pins configured");
 
   iotWebConf.addParameterGroup(&group1);
   iotWebConf.addParameterGroup(&group2);
   iotWebConf.addParameterGroup(&group3);
   iotWebConf.addParameterGroup(&mqttGroup);
+
+  Serial.println("IOTWC Config added");
+
   iotWebConf.setConfigSavedCallback(&configSaved);
   iotWebConf.setFormValidator(&formValidator);
-  iotWebConf.getApTimeoutParameter()->visible = true;
+  //iotWebConf.getApTimeoutParameter()->visible = true;
 
+  Serial.println("IOTWC Callbacks added");
+
+  delay(250);
   // -- Initializing the configuration.
-  iotWebConf.init();
+  validConfig = iotWebConf.init();
+
+  delay(5000);
+
+
+  if (!validConfig)
+  {
+    Serial.println("IOTWC Invalid Config");
+  } else {
+    Serial.println("IOTWC Valid Config");
+  }
+
+  delay(1000);
 
   // -- Set up required URL handlers on the web server.
   server.on("/", handleRoot);
   server.on("/config", []{ iotWebConf.handleConfig(); });
   server.onNotFound([](){ iotWebConf.handleNotFound(); });
 
+  delay(1000);
   Serial.println("Ready.");
 
-  mb.client();
-
-
-  pinMode(PIN_HEATER_A1, OUTPUT);
-  pinMode(PIN_HEATER_A2, OUTPUT);
-  pinMode(PIN_HEATER_A3, OUTPUT);
-  pinMode(PIN_HEATER_B1, OUTPUT);
-  pinMode(PIN_HEATER_B2, OUTPUT);
-  pinMode(PIN_HEATER_B3, OUTPUT);
-
-  pinMode(ENABLE_PIN_A, INPUT_PULLUP);
-  pinMode(ENABLE_PIN_B, INPUT_PULLUP);
-
+  delay(1000);
+  Serial.println("Config Done");
+  delay(1000);
   configSaved();
+  delay(1000);
+
+  Serial.println("Config Done");
+
+  enableA = false;
+  enableB = false;
+
+  delay(1000);
 }
 
 void loop() 
@@ -268,9 +303,8 @@ void loop()
   unsigned long currentTime = millis();
   unsigned long timediff;
   unsigned long timediff2;
-
   float timeAct;
-  
+
   
   // -- doLoop should be called as frequently as possible.
   iotWebConf.doLoop();
@@ -281,13 +315,17 @@ void loop()
 
 
   if(iotWebConf.getState() == iotwebconf::OnLine) {
-    if(!isOnline) reconnect();
-
+    if(!isOnline) {
+      timeClient.begin();
+      timeClient.setTimeOffset(utc_offset * 3600);
+      mb.client();
+    }
     isOnline = true;
-    onlineAction();
+    timeClient.update();
   } else {
     isOnline = false;
   }
+
 
 
   if(timediff > modbusTimer) {
@@ -295,16 +333,19 @@ void loop()
 
     if(iotWebConf.getState() == iotwebconf::OnLine) {
       Serial.println("Modbus read input register");
+      
       if(mb.isConnected(remote)) {
         mb.readIreg(remote, 841, res, REG_COUNT, cb, targetSID);
         mb.readIreg(remote, 851, &res1, 1, cb, targetSID);
         mb.readIreg(remote, 865, &res2, 1, cb, targetSID);
       } else {
         Serial.println("Reconnect to Modbus Server");
+        
         mb.connect(remote);
       }
     }
 
+    
     time_t epochTime = timeClient.getEpochTime();
     struct tm *ptm = gmtime ((time_t *)&epochTime); 
     // Calculate the times of sunrise, transit, and sunset, in hours (UTC)
@@ -312,16 +353,18 @@ void loop()
 
     timeAct = timeClient.getHours() + ((float)timeClient.getMinutes() / 60.0);
     inTimerange = (timeAct > (sunrise + utc_offset + sunsetOffset)) && (timeAct < (sunset + utc_offset - sunsetOffset));
-  
+    
   }
 
-  enableA = digitalRead(ENABLE_PIN_A) == LOW;
-  enableB = digitalRead(ENABLE_PIN_B) == LOW;
+  
 
   if(timediff2 > 2*modbusTimer) {
-    lastHeaterCall = currentTime;
-    Serial.println("Update output pins");
 
+
+    enableA = (digitalRead(ENABLE_PIN_A) == LOW);
+    enableB = (digitalRead(ENABLE_PIN_B) == LOW);
+    
+    lastHeaterCall = currentTime;
     estimatedCurrent = pvCurrent + vebusCurrent;
     
     if(vebusCurrent > 0) estimatedCurrent = pvCurrent;
@@ -335,7 +378,8 @@ void loop()
       remainingCurrent += bufferCurrent;
     }
 
-    for(int i=0; i<6; i++) {
+    
+    for(int i=0; i<5; i++) {
       if(remainingCurrent > heaterCurrent[i] && batterySOC > minBatSOC && inTimerange && ((i<3 && enableA) || (i>=3 && enableB))) {
         remainingCurrent -= heaterCurrent[i];
         numberOfActiveHeater++;
@@ -344,31 +388,20 @@ void loop()
         heaterEnable[i] = false;
       }
     }
+    
+
+    digitalWrite(PIN_HEATER_A1, heaterEnable[0] ? HIGH : LOW);
+    digitalWrite(PIN_HEATER_A2, heaterEnable[1] ? HIGH : LOW);
+    digitalWrite(PIN_HEATER_A3, heaterEnable[2] ? HIGH : LOW);
+
+    digitalWrite(PIN_HEATER_B1, heaterEnable[3] ? HIGH : LOW);
+    digitalWrite(PIN_HEATER_B2, heaterEnable[4] ? HIGH : LOW);
+    
   }
 
-  setOutput();
 
 }
 
-void setOutput() {
-  if(heaterEnable[0]) digitalWrite(PIN_HEATER_A1, HIGH);
-  else digitalWrite(PIN_HEATER_A1, LOW);
-
-  if(heaterEnable[1]) digitalWrite(PIN_HEATER_A2, HIGH);
-  else digitalWrite(PIN_HEATER_A2, LOW);
-
-  if(heaterEnable[2]) digitalWrite(PIN_HEATER_A3, HIGH);
-  else digitalWrite(PIN_HEATER_A3, LOW);
-
-  if(heaterEnable[3]) digitalWrite(PIN_HEATER_B1, HIGH);
-  else digitalWrite(PIN_HEATER_B1, LOW);
-
-  if(heaterEnable[4]) digitalWrite(PIN_HEATER_B2, HIGH);
-  else digitalWrite(PIN_HEATER_B2, LOW);
-
-  if(heaterEnable[5]) digitalWrite(PIN_HEATER_B3, HIGH);
-  else digitalWrite(PIN_HEATER_B3, LOW);
-}
 
 bool cb(Modbus::ResultCode event, uint16_t transactionId, void* data) { // Modbus Transaction callback
   Serial.printf("Modbus result: %02X\n", event); 
@@ -494,8 +527,6 @@ void handleRoot()
   s += heaterEnable[3];
   s += "<li>B2 State: ";
   s += heaterEnable[4];
-  s += "<li>B3 State: ";
-  s += heaterEnable[5];
   s += "<li>Group A Enable: ";
   s += enableA;
   s += "<li>Group B Enable: ";
@@ -515,6 +546,7 @@ void handleRoot()
   s += "<p>Sunset: ";
   s += sunset + utc_offset;
   s += "</p>";
+  
   s += "<p>Go to <a href='config'>configure page</a> to change values.</p>";
   s += "</body></html>\n";
 
@@ -532,7 +564,6 @@ void configSaved()
   heaterCurrent[2] = atoi(intParamValueCurrA3);
   heaterCurrent[3] = atoi(intParamValueCurrB1);
   heaterCurrent[4] = atoi(intParamValueCurrB2);
-  heaterCurrent[5] = atoi(intParamValueCurrB3);
 
   sunsetOffset = atoi(intParamValueSunsetOffset);
 
