@@ -1,17 +1,24 @@
 #include <Arduino.h>
 #include <IotWebConf.h>
 #include <IotWebConfUsing.h>
+#include <IotWebConfMultipleWifi.h>
 #include <ModbusTCP.h>
 
 #include <NTPClient.h>
 #include <SolarCalculator.h>
 #include <WiFiUdp.h>
+#include <MQTT.h>
+#include <ArduinoJson.h>
 
 
 #if defined(ESP8266)
   #include <ESP8266WiFi.h> 
+  #include <ESP8266HTTPUpdateServer.h>
+  ESP8266HTTPUpdateServer httpUpdater;
 #elif defined(ESP32)
   #include <WiFi.h>
+  #include <IotWebConfESP32HTTPUpdateServer.h>
+  HTTPUpdateServer httpUpdater;
 #else
 #error "This ain't a ESP8266 or ESP32, dumbo!"
 #endif
@@ -29,7 +36,7 @@ const char wifiInitialApPassword[] = "smrtTHNG8266";
 #define NUMBER_LEN 5
 
 // -- Configuration specific key. The value should be modified if config structure was changed.
-#define CONFIG_VERSION "017"
+#define CONFIG_VERSION "019"
 
 // -- When CONFIG_PIN is pulled to ground on startup, the Thing will use the initial
 //      password to buld an AP. (E.g. in case of lost password)
@@ -45,10 +52,10 @@ const char wifiInitialApPassword[] = "smrtTHNG8266";
 #define PIN_HEATER_A3 D3
 #define PIN_HEATER_B1 D4
 #define PIN_HEATER_B2 D2
-
+#define PIN_HEATER_B3 D6
 
 #define ENABLE_PIN_A D5
-#define ENABLE_PIN_B D6
+
 
 
 union conv 
@@ -70,6 +77,13 @@ String getDateTime();
 // -- Callback methods.
 void configSaved();
 bool formValidator(iotwebconf::WebRequestWrapper* webRequestWrapper);
+void wifiConnected();
+bool connectMqtt();
+bool connectMqttOptions();
+
+String getJSONStatus();
+void handleAPI();
+void sendMqttStatus();
 
 bool cb(Modbus::ResultCode event, uint16_t transactionId, void* data);
 
@@ -87,6 +101,7 @@ char intParamValueCurrA2[NUMBER_LEN];
 char intParamValueCurrA3[NUMBER_LEN];
 char intParamValueCurrB1[NUMBER_LEN];
 char intParamValueCurrB2[NUMBER_LEN];
+char intParamValueCurrB3[NUMBER_LEN];
 
 char intParamValueTimezone[NUMBER_LEN];
 char intParamValueSunsetOffset[NUMBER_LEN];
@@ -102,10 +117,12 @@ char intParamValueIP4[NUMBER_LEN];
 char mqttServerValue[STRING_LEN];
 char mqttUserNameValue[STRING_LEN];
 char mqttUserPasswordValue[STRING_LEN];
+char mqttTopicPrefixValue[STRING_LEN];
 
 
 unsigned long lastModbusCall = 0;
 unsigned long lastHeaterCall = 0;
+unsigned long lastMqttCall = 0;
 unsigned long modbusTimer = 10 * 1000;
 
 IPAddress remote;
@@ -130,6 +147,19 @@ bool inTimerange = false;
 IotWebConf iotWebConf(thingName, &dnsServer, &server, wifiInitialApPassword, CONFIG_VERSION);
 // -- You can also use namespace formats e.g.: iotwebconf::TextParameter
 
+iotwebconf::ChainedWifiParameterGroup chainedWifiParameterGroups[] = {
+  iotwebconf::ChainedWifiParameterGroup("wifi1"),
+  iotwebconf::ChainedWifiParameterGroup("wifi2"),
+  iotwebconf::ChainedWifiParameterGroup("wifi3")
+};
+
+iotwebconf::MultipleWifiAddition multipleWifiAddition(
+  &iotWebConf,
+  chainedWifiParameterGroups,
+  sizeof(chainedWifiParameterGroups)  / sizeof(chainedWifiParameterGroups[0]));
+
+iotwebconf::OptionalGroupHtmlFormatProvider optionalGroupHtmlFormatProvider;
+
 IotWebConfParameterGroup group1 = IotWebConfParameterGroup("group1", "Cerbo");
 IotWebConfNumberParameter intParamIP1 = IotWebConfNumberParameter("IP Adress Part 1", "ipaddr1", intParamValueIP1, NUMBER_LEN, "192", "0..255", "min='0' max='255' step='1'");
 IotWebConfNumberParameter intParamIP2 = IotWebConfNumberParameter("IP Adress Part 2", "ipaddr2", intParamValueIP2, NUMBER_LEN, "168", "0..255", "min='0' max='255' step='1'");
@@ -145,6 +175,8 @@ IotWebConfNumberParameter intParamMinCurrA2 = IotWebConfNumberParameter("Current
 IotWebConfNumberParameter intParamMinCurrA3 = IotWebConfNumberParameter("Current Heater A3", "ucA3", intParamValueCurrA3, NUMBER_LEN, "0", "0..100", "min='0' max='100' step='1'");
 IotWebConfNumberParameter intParamMinCurrB1 = IotWebConfNumberParameter("Current Heater B1", "ucB1", intParamValueCurrB1, NUMBER_LEN, "0", "0..100", "min='0' max='100' step='1'");
 IotWebConfNumberParameter intParamMinCurrB2 = IotWebConfNumberParameter("Current Heater B2", "ucB2", intParamValueCurrB2, NUMBER_LEN, "0", "0..100", "min='0' max='100' step='1'");
+IotWebConfNumberParameter intParamMinCurrB3 = IotWebConfNumberParameter("Current Heater B3", "ucB3", intParamValueCurrB3, NUMBER_LEN, "0", "0..100", "min='0' max='100' step='1'");
+
 IotWebConfNumberParameter intParamBufferSOC = IotWebConfNumberParameter("Buffer SOC", "bufsoc", intParamValueBufferSOC, NUMBER_LEN, "90", "0..100", "min='0' max='100' step='1'");
 IotWebConfNumberParameter intParamBufferCurrent = IotWebConfNumberParameter("Buffer Current", "bufcur", intParamValueBufferCurrent, NUMBER_LEN, "24", "0..100", "min='0' max='100' step='1'");
 
@@ -160,6 +192,7 @@ IotWebConfParameterGroup mqttGroup = IotWebConfParameterGroup("mqtt", "MQTT conf
 IotWebConfTextParameter mqttServerParam = IotWebConfTextParameter("MQTT server", "mqttServer", mqttServerValue, STRING_LEN);
 IotWebConfTextParameter mqttUserNameParam = IotWebConfTextParameter("MQTT user", "mqttUser", mqttUserNameValue, STRING_LEN);
 IotWebConfPasswordParameter mqttUserPasswordParam = IotWebConfPasswordParameter("MQTT password", "mqttPass", mqttUserPasswordValue, STRING_LEN);
+IotWebConfTextParameter mqttTopicPrefix = IotWebConfTextParameter("MQTT Topic Prefix", "mqttPrefix", mqttTopicPrefixValue, STRING_LEN);
 
 
 
@@ -176,7 +209,14 @@ unsigned long modbusSuccessCounter = 0;
 unsigned long modbusErrorCounter = 0;
 
 bool enableA = false;
-bool enableB = false;
+//bool enableB = false;
+
+WiFiClient net;
+MQTTClient mqttClient;
+unsigned long lastMqttConnectionAttempt = 0;
+
+bool needMqttConnect = false;
+bool needReset = false;
 
 ModbusTCP mb;  //ModbusTCP object
 
@@ -201,7 +241,7 @@ void setup()
   pinMode(CONFIG_PIN, INPUT_PULLUP);
 
   pinMode(ENABLE_PIN_A, INPUT_PULLUP);
-  pinMode(ENABLE_PIN_B, INPUT_PULLUP);
+  //pinMode(ENABLE_PIN_B, INPUT_PULLUP);
   
 
   pinMode(PIN_HEATER_A1, OUTPUT);
@@ -209,7 +249,7 @@ void setup()
   pinMode(PIN_HEATER_A3, OUTPUT);
   pinMode(PIN_HEATER_B1, OUTPUT);
   pinMode(PIN_HEATER_B2, OUTPUT);
-  
+  pinMode(PIN_HEATER_B3, OUTPUT);
 
   delay(250);
 
@@ -227,6 +267,7 @@ void setup()
   group2.addItem(&intParamMinCurrA3);
   group2.addItem(&intParamMinCurrB1);
   group2.addItem(&intParamMinCurrB2);
+  group2.addItem(&intParamMinCurrB3);
   group2.addItem(&intParamBufferSOC);
   group2.addItem(&intParamBufferCurrent);
 
@@ -240,21 +281,29 @@ void setup()
   mqttGroup.addItem(&mqttServerParam);
   mqttGroup.addItem(&mqttUserNameParam);
   mqttGroup.addItem(&mqttUserPasswordParam);
+  mqttGroup.addItem(&mqttTopicPrefix);
 
   iotWebConf.setStatusPin(STATUS_PIN);
   iotWebConf.setConfigPin(CONFIG_PIN);
 
   Serial.println("IOTWC Pins configured");
 
+  multipleWifiAddition.init();
+
   iotWebConf.addParameterGroup(&group1);
   iotWebConf.addParameterGroup(&group2);
   iotWebConf.addParameterGroup(&group3);
   iotWebConf.addParameterGroup(&mqttGroup);
 
+  iotWebConf.setupUpdateServer(
+    [](const char* updatePath) { httpUpdater.setup(&server, updatePath); },
+    [](const char* userName, char* password) { httpUpdater.updateCredentials(userName, password); });
+
   Serial.println("IOTWC Config added");
 
   iotWebConf.setConfigSavedCallback(&configSaved);
   iotWebConf.setFormValidator(&formValidator);
+  iotWebConf.setHtmlFormatProvider(&optionalGroupHtmlFormatProvider);
   //iotWebConf.getApTimeoutParameter()->visible = true;
 
   Serial.println("IOTWC Callbacks added");
@@ -263,38 +312,50 @@ void setup()
   // -- Initializing the configuration.
   validConfig = iotWebConf.init();
 
-  delay(5000);
-
-
   if (!validConfig)
   {
     Serial.println("IOTWC Invalid Config");
+    mqttServerValue[0] = '\0';
+    mqttUserNameValue[0] = '\0';
+    mqttUserPasswordValue[0] = '\0';
+    mqttTopicPrefixValue[0] = '\0';
   } else {
     Serial.println("IOTWC Valid Config");
   }
 
-  delay(1000);
+  remote = IPAddress(atoi(intParamValueIP1), atoi(intParamValueIP2), atoi(intParamValueIP3), atoi(intParamValueIP4));
+
+  heaterCurrent[0] = atoi(intParamValueCurrA1);
+  heaterCurrent[1] = atoi(intParamValueCurrA2);
+  heaterCurrent[2] = atoi(intParamValueCurrA3);
+  heaterCurrent[3] = atoi(intParamValueCurrB1);
+  heaterCurrent[4] = atoi(intParamValueCurrB2);
+  heaterCurrent[5] = atoi(intParamValueCurrB3);
+
+  sunsetOffset = atoi(intParamValueSunsetOffset);
+
+  utc_offset = atoi(intParamValueTimezone);
+
+  minBatSOC = atoi(intParamValueminSOC);
+  bufferSOC = atoi(intParamValueBufferSOC);
+  bufferCurrent = atoi(intParamValueBufferCurrent);
+
 
   // -- Set up required URL handlers on the web server.
   server.on("/", handleRoot);
+  server.on("/api", handleAPI);
   server.on("/config", []{ iotWebConf.handleConfig(); });
   server.onNotFound([](){ iotWebConf.handleNotFound(); });
 
-  delay(1000);
+  mqttClient.begin(mqttServerValue, net);
+
   Serial.println("Ready.");
-
-  delay(1000);
-  Serial.println("Config Done");
-  delay(1000);
-  configSaved();
-  delay(1000);
-
   Serial.println("Config Done");
 
   enableA = false;
-  enableB = false;
+  //enableB = false;
 
-  delay(1000);
+  
 }
 
 void loop() 
@@ -303,17 +364,22 @@ void loop()
   unsigned long currentTime = millis();
   unsigned long timediff;
   unsigned long timediff2;
+  unsigned long timediff3;
   float timeAct;
 
   
   // -- doLoop should be called as frequently as possible.
   iotWebConf.doLoop();
   mb.task();
+  mqttClient.loop();
 
   timediff = (currentTime > lastModbusCall) ? currentTime - lastModbusCall : lastModbusCall - currentTime;
   timediff2 = (currentTime > lastHeaterCall) ? currentTime - lastHeaterCall : lastHeaterCall - currentTime;
+  timediff3 = (currentTime > lastMqttCall) ? currentTime - lastMqttCall : lastMqttCall - currentTime;
 
+  
 
+  // Handle Time sync
   if(iotWebConf.getState() == iotwebconf::OnLine) {
     if(!isOnline) {
       timeClient.begin();
@@ -324,6 +390,26 @@ void loop()
     timeClient.update();
   } else {
     isOnline = false;
+  }
+
+  // Handle MQTT and Reboot
+  if (needMqttConnect)
+  {
+    if (connectMqtt())
+    {
+      needMqttConnect = false;
+    }
+  }
+  else if ((iotWebConf.getState() == iotwebconf::OnLine) && (!mqttClient.connected()))
+  {
+    connectMqtt();
+  }
+
+  if (needReset)
+  {
+    Serial.println("Rebooting after 1 second.");
+    iotWebConf.delay(1000);
+    ESP.restart();
   }
 
 
@@ -362,7 +448,7 @@ void loop()
 
 
     enableA = (digitalRead(ENABLE_PIN_A) == LOW);
-    enableB = (digitalRead(ENABLE_PIN_B) == LOW);
+    //enableB = (digitalRead(ENABLE_PIN_B) == LOW);
     
     lastHeaterCall = currentTime;
     estimatedCurrent = pvCurrent + vebusCurrent;
@@ -379,8 +465,8 @@ void loop()
     }
 
     
-    for(int i=0; i<5; i++) {
-      if(remainingCurrent > heaterCurrent[i] && batterySOC > minBatSOC && inTimerange && ((i<3 && enableA) || (i>=3 && enableB))) {
+    for(int i=0; i<6; i++) {
+      if(remainingCurrent > heaterCurrent[i] && batterySOC > minBatSOC && inTimerange && (i<3 && enableA)) {
         remainingCurrent -= heaterCurrent[i];
         numberOfActiveHeater++;
         heaterEnable[i] = true;
@@ -396,12 +482,63 @@ void loop()
 
     digitalWrite(PIN_HEATER_B1, heaterEnable[3] ? HIGH : LOW);
     digitalWrite(PIN_HEATER_B2, heaterEnable[4] ? HIGH : LOW);
-    
+    digitalWrite(PIN_HEATER_B3, heaterEnable[5] ? HIGH : LOW);
   }
 
+  if(timediff3 > 300 * 1000) {
+    lastMqttCall = currentTime;
+
+    Serial.println("Send MQTT Status");
+    sendMqttStatus();
+  }
 
 }
 
+void wifiConnected()
+{
+  Serial.println("Wifi connected");
+  needMqttConnect = true;
+}
+
+bool connectMqtt() {
+  unsigned long now = millis();
+
+  if(mqttServerValue [0] == '\0') {
+    return false;
+  }
+
+  if (1200000 > now - lastMqttConnectionAttempt)
+  {
+    // Do not repeat within 30 sec.
+    return false;
+  }
+  Serial.println("Connecting to MQTT server...");
+  if (!connectMqttOptions()) {
+    lastMqttConnectionAttempt = now;
+    return false;
+  }
+  Serial.println("Connected!");
+
+  return true;
+}
+
+bool connectMqttOptions()
+{
+  bool result;
+  if (mqttUserPasswordValue[0] != '\0')
+  {
+    result = mqttClient.connect(iotWebConf.getThingName(), mqttUserNameValue, mqttUserPasswordValue);
+  }
+  else if (mqttUserNameValue[0] != '\0')
+  {
+    result = mqttClient.connect(iotWebConf.getThingName(), mqttUserNameValue);
+  }
+  else
+  {
+    result = mqttClient.connect(iotWebConf.getThingName());
+  }
+  return result;
+}
 
 bool cb(Modbus::ResultCode event, uint16_t transactionId, void* data) { // Modbus Transaction callback
   Serial.printf("Modbus result: %02X\n", event); 
@@ -473,7 +610,7 @@ void handleRoot()
     return;
   }
   String s = "<!DOCTYPE html><html lang=\"en\"><head><meta http-equiv=\"refresh\" content=\"60; URL=/\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1, user-scalable=no\"/>";
-  s += "<title>GX Remote Heater Control</title></head><body><h3>Config Overview</h3>";
+  s += "\n<title>GX Remote Heater Control</title></head>\n<body>\n<h3>Config Overview</h3>\n";
   s += "<ul>";
   s += "<li>GX IP Adress: ";
   s += remote.toString();
@@ -497,7 +634,7 @@ void handleRoot()
   s += bufferCurrent;
   s += " A<li>Sunset Offset: ";
   s += sunsetOffset;
-  s += " h</ul><h3>Modbus Measurments</h3><ul><li>PV Current: ";
+  s += " h</ul>\n<h3>Modbus Measurments</h3>\n<ul><li>PV Current: ";
   s += pvCurrent;
   s += " A<li>VE.Bus Current: ";
   s += vebusCurrent;
@@ -505,7 +642,7 @@ void handleRoot()
   s += batterySOC;
   s += " &#037;<li>Battery Current: ";
   s += batteryCurrent;
-  s += " A</ul><h3>Results</h3><ul><li>Number of Active Heaters: ";
+  s += " A</ul>\n<h3>Results</h3>\n<ul><li>Number of Active Heaters: ";
   s += numberOfActiveHeater;
   s += "<li>Estimated Current: ";
   s += estimatedCurrent;
@@ -527,25 +664,27 @@ void handleRoot()
   s += heaterEnable[3];
   s += "<li>B2 State: ";
   s += heaterEnable[4];
+  s += "<li>B3 State: ";
+  s += heaterEnable[5];
   s += "<li>Group A Enable: ";
   s += enableA;
-  s += "<li>Group B Enable: ";
-  s += enableB;
+  //s += "<li>Group B Enable: ";
+  //s += enableB;
   s += "<li>Within valid sun range: ";
   s += inTimerange;
   
-  s += "</ul>";
+  s += "</ul>\n";
   s += "<p>Aktuelles Datum: ";
   s += getDateTime();
-  s += "</p><p>Tageszeit: ";
+  s += "</p>\n<p>Tageszeit: ";
   s += timeClient.getHours() + ((float)timeClient.getMinutes() / 60.0);
-  s += "</p>";
+  s += "</p>\n";
   s += "<p>Sunrise: ";
   s += sunrise + utc_offset;
-  s += "</p>";
+  s += "</p>\n";
   s += "<p>Sunset: ";
   s += sunset + utc_offset;
-  s += "</p>";
+  s += "</p>\n";
   
   s += "<p>Go to <a href='config'>configure page</a> to change values.</p>";
   s += "</body></html>\n";
@@ -553,31 +692,63 @@ void handleRoot()
   server.send(200, "text/html", s);
 }
 
+void handleAPI() {
+
+  String s;
+
+  s = getJSONStatus();
+
+  server.send(200, "application/json", s);
+}
+
+String getJSONStatus() {
+  String msg;
+
+  DynamicJsonDocument doc(1024);
+
+  doc["pvCurrent"] = pvCurrent;
+  doc["vebusCurrent"] = vebusCurrent;
+  doc["batterySOC"] = batterySOC;
+  doc["batteryCurrent"] = batteryCurrent;
+  doc["numberOfActiveHeater"] = numberOfActiveHeater;
+  doc["estimatedCurrent"] = estimatedCurrent;
+  doc["enableA"] = enableA;
+
+  serializeJson(doc, msg);
+
+  return msg;
+}
+
+
+void sendMqttStatus() {
+  String topic;
+  String msg;
+
+  if(!mqttClient.connected()) return;
+  
+  topic = "";
+  topic += mqttTopicPrefixValue;
+  topic += "/status";
+
+  msg = getJSONStatus();
+
+  Serial.print("publish mqtt message to: ");
+  Serial.println(topic);
+  
+  mqttClient.publish(topic, msg);
+}
+
 void configSaved()
 {
   Serial.println("Configuration was updated.");
-
-  remote = IPAddress(atoi(intParamValueIP1), atoi(intParamValueIP2), atoi(intParamValueIP3), atoi(intParamValueIP4));
-
-  heaterCurrent[0] = atoi(intParamValueCurrA1);
-  heaterCurrent[1] = atoi(intParamValueCurrA2);
-  heaterCurrent[2] = atoi(intParamValueCurrA3);
-  heaterCurrent[3] = atoi(intParamValueCurrB1);
-  heaterCurrent[4] = atoi(intParamValueCurrB2);
-
-  sunsetOffset = atoi(intParamValueSunsetOffset);
-
-  utc_offset = atoi(intParamValueTimezone);
-
-  minBatSOC = atoi(intParamValueminSOC);
-  bufferSOC = atoi(intParamValueBufferSOC);
-  bufferCurrent = atoi(intParamValueBufferCurrent);
+  needReset = true;
+  
 }
 
 bool formValidator(iotwebconf::WebRequestWrapper* webRequestWrapper)
 {
   Serial.println("Validating form.");
-  bool valid = true;
+  bool valid = multipleWifiAddition.formValidator(webRequestWrapper);
 
 /*
   int l = webRequestWrapper->arg(stringParam.getId()).length();
