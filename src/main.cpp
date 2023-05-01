@@ -455,18 +455,20 @@ void loop()
     
     if(vebusCurrent > 0) estimatedCurrent = pvCurrent;
 
-    remainingCurrent = estimatedCurrent;
+    
     numberOfActiveHeater = 0;
 
     if(batterySOC > bufferSOC) {
-      if(remainingCurrent < 0) remainingCurrent = 0;
+      if(estimatedCurrent < 0) estimatedCurrent = 0;
 
-      remainingCurrent += bufferCurrent;
+      estimatedCurrent += bufferCurrent;
     }
+
+    remainingCurrent = estimatedCurrent;
 
     
     for(int i=0; i<6; i++) {
-      if(remainingCurrent > heaterCurrent[i] && batterySOC > minBatSOC && inTimerange && (i<3 && enableA)) {
+      if( (heaterCurrent[i] != 0) && (remainingCurrent > heaterCurrent[i]) && (batterySOC > minBatSOC) && inTimerange && ((i<3 && enableA) || (i>=3))) {
         remainingCurrent -= heaterCurrent[i];
         numberOfActiveHeater++;
         heaterEnable[i] = true;
