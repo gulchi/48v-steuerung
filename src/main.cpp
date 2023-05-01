@@ -45,7 +45,7 @@ const char wifiInitialApPassword[] = "smrtTHNG8266";
 // -- Status indicator pin.
 //      First it will light up (kept LOW), on Wifi connection it will blink,
 //      when connected to the Wifi it will turn off (kept HIGH).
-#define STATUS_PIN LED_BUILTIN
+//#define STATUS_PIN LED_BUILTIN
 
 #define PIN_HEATER_A1 D7
 #define PIN_HEATER_A2 D8
@@ -283,7 +283,7 @@ void setup()
   mqttGroup.addItem(&mqttUserPasswordParam);
   mqttGroup.addItem(&mqttTopicPrefix);
 
-  iotWebConf.setStatusPin(STATUS_PIN);
+  //iotWebConf.setStatusPin(STATUS_PIN);
   iotWebConf.setConfigPin(CONFIG_PIN);
 
   Serial.println("IOTWC Pins configured");
