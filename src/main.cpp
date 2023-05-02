@@ -417,6 +417,7 @@ void loop()
   
   if(millis() > ULONG_MAX-(300*1000)) {
     Serial.println("Need Reboot");
+    needReset = true;
   }
 
   // Handle Time sync
