@@ -10,6 +10,7 @@
 #include <MQTT.h>
 #include <ArduinoJson.h>
 
+#define IOTWEBCONF_CONFIG_USE_MDNS
 
 #if defined(ESP8266)
   #include <ESP8266WiFi.h> 
@@ -49,14 +50,22 @@ const char wifiInitialApPassword[] = "smrtTHNG8266";
 
 
 #if defined(ESP8266)
-  #define PIN_HEATER_A1 D7
-  #define PIN_HEATER_A2 D8
-  #define PIN_HEATER_A3 D3
-  #define PIN_HEATER_B1 D4
-  #define PIN_HEATER_B2 D2
-  #define PIN_HEATER_B3 D6
-  #define ENABLE_PIN_A D5
-  #define CONFIG_PIN D0
+  // D7 13
+  #define PIN_HEATER_A1 13
+  //D8 15
+  #define PIN_HEATER_A2 15
+  // D1 5
+  #define PIN_HEATER_A3 5
+  // D4 2
+  #define PIN_HEATER_B1 2
+  // D2 4
+  #define PIN_HEATER_B2 4
+  // D6 12
+  #define PIN_HEATER_B3 12
+  // D5 14
+  #define ENABLE_PIN_A 14
+  // D0 3
+  #define CONFIG_PIN 3
 
 #elif defined(ESP32)
   #define PIN_HEATER_A1 5
