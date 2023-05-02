@@ -40,22 +40,39 @@ const char wifiInitialApPassword[] = "smrtTHNG8266";
 
 // -- When CONFIG_PIN is pulled to ground on startup, the Thing will use the initial
 //      password to buld an AP. (E.g. in case of lost password)
-#define CONFIG_PIN D0
+
 
 // -- Status indicator pin.
 //      First it will light up (kept LOW), on Wifi connection it will blink,
 //      when connected to the Wifi it will turn off (kept HIGH).
 //#define STATUS_PIN LED_BUILTIN
 
-#define PIN_HEATER_A1 D7
-#define PIN_HEATER_A2 D8
-#define PIN_HEATER_A3 D3
-#define PIN_HEATER_B1 D4
-#define PIN_HEATER_B2 D2
-#define PIN_HEATER_B3 D6
 
-#define ENABLE_PIN_A D5
+#if defined(ESP8266)
+  #define PIN_HEATER_A1 D7
+  #define PIN_HEATER_A2 D8
+  #define PIN_HEATER_A3 D3
+  #define PIN_HEATER_B1 D4
+  #define PIN_HEATER_B2 D2
+  #define PIN_HEATER_B3 D6
+  #define ENABLE_PIN_A D5
+  #define CONFIG_PIN D0
 
+#elif defined(ESP32)
+  #define PIN_HEATER_A1 5
+  #define PIN_HEATER_A2 18
+  #define PIN_HEATER_A3 19
+  #define PIN_HEATER_B1 21
+  #define PIN_HEATER_B2 22
+  #define PIN_HEATER_B3 23
+  #define ENABLE_PIN_A 35
+  #define CONFIG_PIN 34
+#else
+#error "This ain't a ESP8266 or ESP32, dumbo!"
+#endif
+
+
+#define REG_COUNT 4
 
 
 union conv 
@@ -67,10 +84,6 @@ union conv
 
 uint8_t targetSID = 100;
 
-
-#define REG_COUNT 4
-
-
 void handleRoot();
 String getDateTime();
 
@@ -80,6 +93,13 @@ bool formValidator(iotwebconf::WebRequestWrapper* webRequestWrapper);
 void wifiConnected();
 bool connectMqtt();
 bool connectMqttOptions();
+
+void manEnableA1();
+void manEnableA2();
+void manEnableA3();
+void manEnableB1();
+void manEnableB2();
+void manEnableB3();
 
 String getJSONStatus();
 void handleAPI();
@@ -125,16 +145,22 @@ unsigned long lastHeaterCall = 0;
 unsigned long lastMqttCall = 0;
 unsigned long modbusTimer = 10 * 1000;
 
+unsigned long t_man_activate[6];
+
+
 IPAddress remote;
 Modbus::ResultCode modbusresult;
 
-uint16 res[REG_COUNT];
-uint16 res1;
-uint16 res2;
+
+u_int16_t res[REG_COUNT];
+u_int16_t res1;
+u_int16_t res2;
 
 
 int heaterCurrent[6];
 bool heaterEnable[6];
+
+bool bufferHeatEnable;
 
 int sunsetOffset = -6;
 
@@ -344,6 +370,12 @@ void setup()
   // -- Set up required URL handlers on the web server.
   server.on("/", handleRoot);
   server.on("/api", handleAPI);
+  server.on("/man/a1", manEnableA1);
+  server.on("/man/a2", manEnableA2);
+  server.on("/man/a3", manEnableA3);
+  server.on("/man/b1", manEnableB1);
+  server.on("/man/b2", manEnableB2);
+  server.on("/man/b3", manEnableB3);
   server.on("/config", []{ iotWebConf.handleConfig(); });
   server.onNotFound([](){ iotWebConf.handleNotFound(); });
 
@@ -355,6 +387,11 @@ void setup()
   enableA = false;
   //enableB = false;
 
+  bufferHeatEnable = false;
+
+  for(int i=0; i<6; i++) {
+    t_man_activate[i] = ULONG_MAX-1;
+  }
   
 }
 
@@ -378,6 +415,9 @@ void loop()
   timediff3 = (currentTime > lastMqttCall) ? currentTime - lastMqttCall : lastMqttCall - currentTime;
 
   
+  if(millis() > ULONG_MAX-(300*1000)) {
+    Serial.println("Need Reboot");
+  }
 
   // Handle Time sync
   if(iotWebConf.getState() == iotwebconf::OnLine) {
@@ -459,6 +499,14 @@ void loop()
     numberOfActiveHeater = 0;
 
     if(batterySOC > bufferSOC) {
+      bufferHeatEnable = true;
+    }
+
+    if(batterySOC < bufferSOC -5) {
+      bufferHeatEnable = false;
+    }
+
+    if(bufferHeatEnable) {
       if(estimatedCurrent < 0) estimatedCurrent = 0;
 
       estimatedCurrent += bufferCurrent;
@@ -477,14 +525,30 @@ void loop()
       }
     }
     
+    for(int i=0; i<6; i++) {
+      if((currentTime > t_man_activate[i]) &&((currentTime - t_man_activate[i]) < 120 * 1000)) {
+        heaterEnable[i] = true;
+      }
+    }
+
 
     digitalWrite(PIN_HEATER_A1, heaterEnable[0] ? HIGH : LOW);
+    iotWebConf.delay(100);
+
     digitalWrite(PIN_HEATER_A2, heaterEnable[1] ? HIGH : LOW);
+    iotWebConf.delay(100);
+
     digitalWrite(PIN_HEATER_A3, heaterEnable[2] ? HIGH : LOW);
+    iotWebConf.delay(100);
 
     digitalWrite(PIN_HEATER_B1, heaterEnable[3] ? HIGH : LOW);
+    iotWebConf.delay(100);
+
     digitalWrite(PIN_HEATER_B2, heaterEnable[4] ? HIGH : LOW);
+    iotWebConf.delay(100);
+
     digitalWrite(PIN_HEATER_B3, heaterEnable[5] ? HIGH : LOW);
+    iotWebConf.delay(100);
   }
 
   if(timediff3 > 300 * 1000) {
@@ -648,6 +712,8 @@ void handleRoot()
   s += numberOfActiveHeater;
   s += "<li>Estimated Current: ";
   s += estimatedCurrent;
+  s += " A<li>Delta Current: ";
+  s += pvCurrent + vebusCurrent;
   s += " A<li>Modbus Result: ";
   s += modbusresult;
   s += "<li>Modbus Success Counter: ";
@@ -675,8 +741,15 @@ void handleRoot()
   s += "<li>Within valid sun range: ";
   s += inTimerange;
   
-  s += "</ul>\n";
-  s += "<p>Aktuelles Datum: ";
+  s += "</ul></ul>\n<h3>Links</h3>\n<ul>\n";
+  s += "<li> <a href=\"/man/a1\">Activate A1</a>";
+  s += "<li> <a href=\"/man/a2\">Activate A2</a>";
+  s += "<li> <a href=\"/man/a3\">Activate A3</a>";
+  s += "<li> <a href=\"/man/b1\">Activate B1</a>";
+  s += "<li> <a href=\"/man/b2\">Activate B2</a>";
+  s += "<li> <a href=\"/man/b3\">Activate B3</a>";
+  s += "<li> <a href=\"/api\">API</a>";
+  s += "</ul><p>Aktuelles Datum: ";
   s += getDateTime();
   s += "</p>\n<p>Tageszeit: ";
   s += timeClient.getHours() + ((float)timeClient.getMinutes() / 60.0);
@@ -687,6 +760,9 @@ void handleRoot()
   s += "<p>Sunset: ";
   s += sunset + utc_offset;
   s += "</p>\n";
+  s += "<p>Uptime: ";
+  s += millis() / 1000;
+  s += " s</p>\n";
   
   s += "<p>Go to <a href='config'>configure page</a> to change values.</p>";
   s += "</body></html>\n";
@@ -715,6 +791,7 @@ String getJSONStatus() {
   doc["numberOfActiveHeater"] = numberOfActiveHeater;
   doc["estimatedCurrent"] = estimatedCurrent;
   doc["enableA"] = enableA;
+  doc["deltaCurr"] = pvCurrent + vebusCurrent;
 
   serializeJson(doc, msg);
 
@@ -763,3 +840,32 @@ bool formValidator(iotwebconf::WebRequestWrapper* webRequestWrapper)
   return valid;
 }
 
+void manEnableA1() {
+  t_man_activate[0] = millis();
+  server.send(200, "text/html","<!DOCTYPE html><html lang=\"en\"><head><meta http-equiv=\"refresh\" content=\"2; URL=/\"></head><body>Pin activated</body></html>");
+}
+
+void manEnableA2() {
+  t_man_activate[1] = millis();
+  server.send(200, "text/html","<!DOCTYPE html><html lang=\"en\"><head><meta http-equiv=\"refresh\" content=\"2; URL=/\"></head><body>Pin activated</body></html>");
+}
+
+void manEnableA3() {
+  t_man_activate[2] = millis();
+  server.send(200, "text/html","<!DOCTYPE html><html lang=\"en\"><head><meta http-equiv=\"refresh\" content=\"2; URL=/\"></head><body>Pin activated</body></html>");
+}
+
+void manEnableB1() {
+  t_man_activate[3] = millis();
+  server.send(200, "text/html","<!DOCTYPE html><html lang=\"en\"><head><meta http-equiv=\"refresh\" content=\"2; URL=/\"></head><body>Pin activated</body></html>");
+}
+
+void manEnableB2() {
+  t_man_activate[4] = millis();
+  server.send(200, "text/html","<!DOCTYPE html><html lang=\"en\"><head><meta http-equiv=\"refresh\" content=\"2; URL=/\"></head><body>Pin activated</body></html>");
+}
+
+void manEnableB3() {
+  t_man_activate[5] = millis();
+  server.send(200, "text/html","<!DOCTYPE html><html lang=\"en\"><head><meta http-equiv=\"refresh\" content=\"2; URL=/\"></head><body>Pin activated</body></html>");
+}
