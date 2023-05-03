@@ -196,7 +196,7 @@ iotwebconf::MultipleWifiAddition multipleWifiAddition(
 iotwebconf::OptionalGroupHtmlFormatProvider optionalGroupHtmlFormatProvider;
 
 IotWebConfParameterGroup group1 = IotWebConfParameterGroup("group1", "Cerbo");
-IotWebConfNumberParameter intParamIP1 = IotWebConfNumberParameter("IP Adress Part 1", "ipaddr1", intParamValueIP1, NUMBER_LEN, "192", "0..255", "min='0' max='255' step='1'");
+IotWebConfNumberParameter intParamIP1 = IotWebConfNumberParameter("IP Adress Part 1", "ipaddr1", intParamValueIP1, NUMBER_LEN, "192", "0..255", "min='1' max='255' step='1'");
 IotWebConfNumberParameter intParamIP2 = IotWebConfNumberParameter("IP Adress Part 2", "ipaddr2", intParamValueIP2, NUMBER_LEN, "168", "0..255", "min='0' max='255' step='1'");
 IotWebConfNumberParameter intParamIP3 = IotWebConfNumberParameter("IP Adress Part 3", "ipaddr3", intParamValueIP3, NUMBER_LEN, "1", "0..255", "min='0' max='255' step='1'");
 IotWebConfNumberParameter intParamIP4 = IotWebConfNumberParameter("IP Adress Part 4", "ipaddr4", intParamValueIP4, NUMBER_LEN, "41", "0..255", "min='0' max='255' step='1'");
@@ -247,7 +247,8 @@ bool enableA = false;
 //bool enableB = false;
 
 WiFiClient net;
-MQTTClient mqttClient;
+MQTTClient mqttClient(256);
+
 unsigned long lastMqttConnectionAttempt = 0;
 
 bool needMqttConnect = false;
@@ -418,6 +419,7 @@ void loop()
   iotWebConf.doLoop();
   mb.task();
   mqttClient.loop();
+  delay(10);
 
   timediff = (currentTime > lastModbusCall) ? currentTime - lastModbusCall : lastModbusCall - currentTime;
   timediff2 = (currentTime > lastHeaterCall) ? currentTime - lastHeaterCall : lastHeaterCall - currentTime;
@@ -512,21 +514,23 @@ void loop()
       bufferHeatEnable = true;
     }
 
-    if(batterySOC < bufferSOC -5) {
+    if(batterySOC < (bufferSOC -5)) {
       bufferHeatEnable = false;
     }
 
     if(bufferHeatEnable) {
-      if(estimatedCurrent < 0) estimatedCurrent = 0;
+      if(estimatedCurrent < 0) {
+        estimatedCurrent = 0;
+      }
 
-      estimatedCurrent += bufferCurrent;
+      estimatedCurrent = estimatedCurrent +  (float)bufferCurrent;
     }
 
     remainingCurrent = estimatedCurrent;
 
     
     for(int i=0; i<6; i++) {
-      if( (heaterCurrent[i] != 0) && (remainingCurrent > heaterCurrent[i]) && (batterySOC > minBatSOC) && inTimerange && ((i<3 && enableA) || (i>=3))) {
+      if( (heaterCurrent[i] != 0) && (remainingCurrent > heaterCurrent[i]) && (batterySOC > minBatSOC) && inTimerange && ((i<3 && enableA) || (i>=3)) ) {
         remainingCurrent -= heaterCurrent[i];
         numberOfActiveHeater++;
         heaterEnable[i] = true;
@@ -543,22 +547,14 @@ void loop()
 
 
     digitalWrite(PIN_HEATER_A1, heaterEnable[0] ? HIGH : LOW);
-    iotWebConf.delay(100);
-
     digitalWrite(PIN_HEATER_A2, heaterEnable[1] ? HIGH : LOW);
-    iotWebConf.delay(100);
-
     digitalWrite(PIN_HEATER_A3, heaterEnable[2] ? HIGH : LOW);
-    iotWebConf.delay(100);
-
     digitalWrite(PIN_HEATER_B1, heaterEnable[3] ? HIGH : LOW);
-    iotWebConf.delay(100);
-
     digitalWrite(PIN_HEATER_B2, heaterEnable[4] ? HIGH : LOW);
-    iotWebConf.delay(100);
-
     digitalWrite(PIN_HEATER_B3, heaterEnable[5] ? HIGH : LOW);
-    iotWebConf.delay(100);
+
+    sendMqttStatus();
+    
   }
 
   if(timediff3 > 300 * 1000) {
@@ -583,7 +579,7 @@ bool connectMqtt() {
     return false;
   }
 
-  if (1200000 > now - lastMqttConnectionAttempt)
+  if (300000 > now - lastMqttConnectionAttempt)
   {
     // Do not repeat within 30 sec.
     return false;
@@ -593,7 +589,12 @@ bool connectMqtt() {
     lastMqttConnectionAttempt = now;
     return false;
   }
-  Serial.println("Connected!");
+
+  if(mqttClient.connected()) {
+    Serial.println("Connected!");
+  } else {
+    Serial.println("Still not connected.");
+  }
 
   return true;
 }
@@ -794,14 +795,14 @@ String getJSONStatus() {
 
   DynamicJsonDocument doc(1024);
 
-  doc["pvCurrent"] = pvCurrent;
-  doc["vebusCurrent"] = vebusCurrent;
-  doc["batterySOC"] = batterySOC;
-  doc["batteryCurrent"] = batteryCurrent;
-  doc["numberOfActiveHeater"] = numberOfActiveHeater;
-  doc["estimatedCurrent"] = estimatedCurrent;
-  doc["enableA"] = enableA;
-  doc["deltaCurr"] = pvCurrent + vebusCurrent;
+  doc["pvCurr"] = pvCurrent;
+  doc["vebusCurr"] = vebusCurrent;
+  doc["batSOC"] = batterySOC;
+  doc["batCurr"] = batteryCurrent;
+  doc["numAct"] = numberOfActiveHeater;
+  doc["estCurr"] = estimatedCurrent;
+  doc["enA"] = enableA;
+  doc["dCurr"] = pvCurrent + vebusCurrent;
 
   serializeJson(doc, msg);
 
@@ -822,9 +823,11 @@ void sendMqttStatus() {
   msg = getJSONStatus();
 
   Serial.print("publish mqtt message to: ");
-  Serial.println(topic);
+  Serial.print(topic);
+  Serial.print(" with Message ");
+  Serial.println(msg);
   
-  mqttClient.publish(topic, msg);
+  mqttClient.publish(topic, msg.c_str());
 }
 
 void configSaved()
