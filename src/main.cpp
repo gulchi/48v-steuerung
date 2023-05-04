@@ -9,6 +9,7 @@
 #include <WiFiUdp.h>
 #include <MQTT.h>
 #include <ArduinoJson.h>
+#include <WiFiClientSecure.h>
 
 #define IOTWEBCONF_CONFIG_USE_MDNS
 
@@ -246,8 +247,8 @@ unsigned long modbusErrorCounter = 0;
 bool enableA = false;
 //bool enableB = false;
 
-WiFiClient net;
-MQTTClient mqttClient(256);
+WiFiClientSecure net;
+MQTTClient mqttClient(512);
 
 unsigned long lastMqttConnectionAttempt = 0;
 
@@ -389,7 +390,8 @@ void setup()
   server.on("/config", []{ iotWebConf.handleConfig(); });
   server.onNotFound([](){ iotWebConf.handleNotFound(); });
 
-  mqttClient.begin(mqttServerValue, net);
+  net.setInsecure();
+  mqttClient.begin(mqttServerValue, 8883, net);
 
   Serial.println("Ready.");
   Serial.println("Config Done");
@@ -791,7 +793,14 @@ void handleAPI() {
 }
 
 String getJSONStatus() {
+  uint8_t heaters = 0;
   String msg;
+
+  for(int i=0; i<6; i++) {
+    if(heaterEnable[i]) {
+      heaters += (1<<i);
+    }
+  }
 
   DynamicJsonDocument doc(1024);
 
@@ -802,7 +811,8 @@ String getJSONStatus() {
   doc["numAct"] = numberOfActiveHeater;
   doc["estCurr"] = estimatedCurrent;
   doc["enA"] = enableA;
-  doc["dCurr"] = pvCurrent + vebusCurrent;
+  doc["mbres"] = modbusresult;
+  doc["heaters"] = heaters;
 
   serializeJson(doc, msg);
 
