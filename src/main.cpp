@@ -4,14 +4,13 @@
 #include <IotWebConfMultipleWifi.h>
 #include <ModbusTCP.h>
 
-#include <NTPClient.h>
+//#include <NTPClient.h>
 #include <SolarCalculator.h>
 #include <WiFiUdp.h>
 #include <MQTT.h>
 #include <ArduinoJson.h>
 #include <WiFiClientSecure.h>
-
-#define IOTWEBCONF_CONFIG_USE_MDNS
+#include <time.h>
 
 #if defined(ESP8266)
   #include <ESP8266WiFi.h> 
@@ -40,14 +39,11 @@ const char wifiInitialApPassword[] = "smrtTHNG8266";
 // -- Configuration specific key. The value should be modified if config structure was changed.
 #define CONFIG_VERSION "019"
 
-// -- When CONFIG_PIN is pulled to ground on startup, the Thing will use the initial
-//      password to buld an AP. (E.g. in case of lost password)
-
-
-// -- Status indicator pin.
-//      First it will light up (kept LOW), on Wifi connection it will blink,
-//      when connected to the Wifi it will turn off (kept HIGH).
-//#define STATUS_PIN LED_BUILTIN
+const char* const PROGMEM NTP_SERVER[] = {"fritz.box", "de.pool.ntp.org", "at.pool.ntp.org", "ch.pool.ntp.org", "ptbtime1.ptb.de", "europe.pool.ntp.org"};
+const char* const PROGMEM DAY_NAMES[] = {"Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"};
+const char* const PROGMEM DAY_SHORT[] = {"So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"};
+const char* const PROGMEM MONTH_NAMES[] = {"Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"};
+const char* const PROGMEM MONTH_SHORT[] = {"Jan", "Feb", "Mrz", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"};
 
 
 #if defined(ESP8266)
@@ -84,6 +80,7 @@ const char wifiInitialApPassword[] = "smrtTHNG8266";
 
 #define REG_COUNT 4
 
+#define MY_TZ "CET-1CEST,M3.5.0,M10.5.0/3"
 
 union conv 
 {
@@ -103,6 +100,8 @@ bool formValidator(iotwebconf::WebRequestWrapper* webRequestWrapper);
 void wifiConnected();
 bool connectMqtt();
 bool connectMqttOptions();
+
+uint32_t getMyChipId();
 
 void manEnableA1();
 void manEnableA2();
@@ -257,10 +256,12 @@ bool needReset = false;
 
 ModbusTCP mb;  //ModbusTCP object
 
-WiFiUDP ntpUDP;
 
 int utc_offset = 2;
-NTPClient timeClient(ntpUDP, "de.pool.ntp.org", utc_offset * 3600, 60000);
+
+/* Globals */
+struct tm lt;         // http://www.cplusplus.com/reference/ctime/tm/
+struct tm utc;
 
 
 bool isOnline = false;
@@ -405,6 +406,14 @@ void setup()
     t_man_activate[i] = ULONG_MAX-1;
   }
   
+  #ifdef ARDUINO_ARCH_ESP32
+    Serial.printf("\n\nSketchname: %s\nBuild: %s\t\tIDE: %d.%d.%d\n%s\n\n",
+                (__FILE__), (__TIMESTAMP__), ARDUINO / 10000, ARDUINO % 10000 / 100, ARDUINO % 100 / 10 ? ARDUINO % 100 : ARDUINO % 10, String(ESP.getSdkVersion()).c_str());
+  #else
+    Serial.printf("\n\nSketchname: %s\nBuild: %s\t\tIDE: %d.%d.%d\n%s\n\n",
+                (__FILE__), (__TIMESTAMP__), ARDUINO / 10000, ARDUINO % 10000 / 100, ARDUINO % 100 / 10 ? ARDUINO % 100 : ARDUINO % 10, ESP.getFullVersion().c_str());
+  #endif
+  
 }
 
 void loop() 
@@ -415,7 +424,7 @@ void loop()
   unsigned long timediff2;
   unsigned long timediff3;
   float timeAct;
-
+  
   
   // -- doLoop should be called as frequently as possible.
   iotWebConf.doLoop();
@@ -436,12 +445,20 @@ void loop()
   // Handle Time sync
   if(iotWebConf.getState() == iotwebconf::OnLine) {
     if(!isOnline) {
-      timeClient.begin();
-      timeClient.setTimeOffset(utc_offset * 3600);
+      #ifdef ARDUINO_ARCH_ESP32
+      // ESP32 seems to be a little more complex:
+      configTime(0, 0, NTP_SERVER[1]);  // 0, 0 because we will use TZ in the next line
+      setenv("TZ", MY_TZ, 1);            // Set environment variable with your time zone
+      tzset();
+      #else
+      // ESP8266
+      configTime(MY_TZ, NTP_SERVER[1]);    // --> for the ESP8266 only
+      #endif
+
       mb.client();
     }
     isOnline = true;
-    timeClient.update();
+    //timeClient.update();
   } else {
     isOnline = false;
   }
@@ -485,18 +502,17 @@ void loop()
       }
     }
 
-    
-    time_t epochTime = timeClient.getEpochTime();
-    struct tm *ptm = gmtime ((time_t *)&epochTime); 
-    // Calculate the times of sunrise, transit, and sunset, in hours (UTC)
-    calcSunriseSunset(ptm->tm_year+1900, ptm->tm_mon+1, ptm->tm_mday, 48.402141, 9.988537, transit, sunrise, sunset);
+    time_t now = time(&now);
+    localtime_r(&now, &lt);
 
-    timeAct = timeClient.getHours() + ((float)timeClient.getMinutes() / 60.0);
+    // Calculate the times of sunrise, transit, and sunset, in hours (UTC)
+    calcSunriseSunset(lt.tm_year+1900, lt.tm_mon+1, lt.tm_mday, 48.402141, 9.988537, transit, sunrise, sunset);
+
+    timeAct = lt.tm_hour + ((float)lt.tm_min / 60.0);
     inTimerange = (timeAct > (sunrise + utc_offset + sunsetOffset)) && (timeAct < (sunset + utc_offset - sunsetOffset));
     
   }
 
-  
 
   if(timediff2 > 2*modbusTimer) {
 
@@ -581,7 +597,7 @@ bool connectMqtt() {
     return false;
   }
 
-  if (300000 > now - lastMqttConnectionAttempt)
+  if (30000 > now - lastMqttConnectionAttempt)
   {
     // Do not repeat within 30 sec.
     return false;
@@ -651,28 +667,19 @@ bool cb(Modbus::ResultCode event, uint16_t transactionId, void* data) { // Modbu
   return true;
 }
 
-void reconnect() {
-  timeClient.begin();
-  timeClient.setTimeOffset(utc_offset * 3600);
-}
-
-void onlineAction() {
-  timeClient.update();
-}
-
 
 String getDateTime() {
-  time_t epochTime = timeClient.getEpochTime();
-  struct tm *ptm = gmtime ((time_t *)&epochTime); 
+  String s;
+  static char buf[30]; 
+  time_t now = time(&now);
+  localtime_r(&now, &lt);
+  gmtime_r(&now, &utc);
 
-  String s = "";
-  s += (ptm->tm_mday);
-  s += ".";
-  s += (ptm->tm_mon +1);
-  s += ".";
-  s += (ptm->tm_year+1900);
-  s += " ";
-  s += timeClient.getFormattedTime();
+  
+
+  strftime (buf, sizeof(buf), "%d.%m.%Y %T", &lt);
+
+  s = buf;
 
   return s;
 }
@@ -687,7 +694,8 @@ void handleRoot()
   {
     // -- Captive portal request were already served.
     return;
-  }
+  } 
+
   String s = "<!DOCTYPE html><html lang=\"en\"><head><meta http-equiv=\"refresh\" content=\"60; URL=/\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1, user-scalable=no\"/>";
   s += "\n<title>GX Remote Heater Control</title></head>\n<body>\n<h3>Config Overview</h3>\n";
   s += "<ul>";
@@ -764,9 +772,6 @@ void handleRoot()
   s += "<li> <a href=\"/api\">API</a>";
   s += "</ul><p>Aktuelles Datum: ";
   s += getDateTime();
-  s += "</p>\n<p>Tageszeit: ";
-  s += timeClient.getHours() + ((float)timeClient.getMinutes() / 60.0);
-  s += "</p>\n";
   s += "<p>Sunrise: ";
   s += sunrise + utc_offset;
   s += "</p>\n";
@@ -802,7 +807,7 @@ String getJSONStatus() {
     }
   }
 
-  DynamicJsonDocument doc(1024);
+  DynamicJsonDocument doc(512);
 
   doc["pvCurr"] = pvCurrent;
   doc["vebusCurr"] = vebusCurrent;
@@ -819,25 +824,58 @@ String getJSONStatus() {
   return msg;
 }
 
+uint32_t getMyChipId() {
+
+  uint32_t id = 0;
+
+  #ifdef ARDUINO_ARCH_ESP32
+    for(int i=0; i<17; i=i+8) {
+      id |= ((ESP.getEfuseMac() >> (40 - i)) & 0xff) << i;
+    }
+  #else
+    id=ESP.getChipId();
+  #endif
+
+  return id;
+}
+
 
 void sendMqttStatus() {
   String topic;
-  String msg;
+  char id[10];
+
+  String t;
 
   if(!mqttClient.connected()) return;
   
+  ultoa(getMyChipId(),  id, HEX);
+  
+  t = id;
+  t.toUpperCase();
+
   topic = "";
   topic += mqttTopicPrefixValue;
-  topic += "/status";
+  topic += "/";
+  topic += t;
+  topic += "/";
 
-  msg = getJSONStatus();
-
-  Serial.print("publish mqtt message to: ");
-  Serial.print(topic);
-  Serial.print(" with Message ");
-  Serial.println(msg);
   
-  mqttClient.publish(topic, msg.c_str());
+  mqttClient.publish(topic + "pvCurr", String(pvCurrent));
+  mqttClient.publish(topic + "vebusCurr", String(vebusCurrent));
+  mqttClient.publish(topic + "batSOC", String(batterySOC));
+  mqttClient.publish(topic + "batCurr", String(batteryCurrent));
+  mqttClient.publish(topic + "numAct", String(numberOfActiveHeater));
+  mqttClient.publish(topic + "estCurr", String(estimatedCurrent));
+  mqttClient.publish(topic + "enableA", String(enableA));
+  mqttClient.publish(topic + "modbusres", String(modbusresult));
+  mqttClient.publish(topic + "estCurr", String(pvCurrent));
+
+  mqttClient.publish(topic + "heaterA1", String(heaterEnable[0]));
+  mqttClient.publish(topic + "heaterA2", String(heaterEnable[1]));
+  mqttClient.publish(topic + "heaterA3", String(heaterEnable[2]));
+  mqttClient.publish(topic + "heaterB1", String(heaterEnable[3]));
+  mqttClient.publish(topic + "heaterB2", String(heaterEnable[4]));
+  mqttClient.publish(topic + "heaterB3", String(heaterEnable[5]));
 }
 
 void configSaved()
