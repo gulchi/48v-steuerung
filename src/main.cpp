@@ -547,7 +547,27 @@ void loop()
     remainingCurrent = estimatedCurrent;
 
     
-    for(int i=0; i<6; i++) {
+    /*for(int i=0; i<6; i++) {
+      if( (heaterCurrent[i] != 0) && (remainingCurrent > heaterCurrent[i]) && (batterySOC > minBatSOC) && inTimerange && ((i<3 && enableA) || (i>=3)) ) {
+        remainingCurrent -= heaterCurrent[i];
+        numberOfActiveHeater++;
+        heaterEnable[i] = true;
+      } else {
+        heaterEnable[i] = false;
+      }
+    }*/
+
+    for(int i=2; i>=0; i--) {
+      if( (heaterCurrent[i] != 0) && (remainingCurrent > heaterCurrent[i]) && (batterySOC > minBatSOC) && inTimerange && ((i<3 && enableA) || (i>=3)) ) {
+        remainingCurrent -= heaterCurrent[i];
+        numberOfActiveHeater++;
+        heaterEnable[i] = true;
+      } else {
+        heaterEnable[i] = false;
+      }
+    }
+
+    for(int i=5; i>=3; i--) {
       if( (heaterCurrent[i] != 0) && (remainingCurrent > heaterCurrent[i]) && (batterySOC > minBatSOC) && inTimerange && ((i<3 && enableA) || (i>=3)) ) {
         remainingCurrent -= heaterCurrent[i];
         numberOfActiveHeater++;
@@ -620,17 +640,23 @@ bool connectMqtt() {
 bool connectMqttOptions()
 {
   bool result;
+
+  String name;
+  name = iotWebConf.getThingName();
+  name += getMyChipId();
+
+
   if (mqttUserPasswordValue[0] != '\0')
   {
-    result = mqttClient.connect(iotWebConf.getThingName(), mqttUserNameValue, mqttUserPasswordValue);
+    result = mqttClient.connect(name.c_str(), mqttUserNameValue, mqttUserPasswordValue);
   }
   else if (mqttUserNameValue[0] != '\0')
   {
-    result = mqttClient.connect(iotWebConf.getThingName(), mqttUserNameValue);
+    result = mqttClient.connect(name.c_str(), mqttUserNameValue);
   }
   else
   {
-    result = mqttClient.connect(iotWebConf.getThingName());
+    result = mqttClient.connect(name.c_str());
   }
   return result;
 }
